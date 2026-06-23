@@ -1,0 +1,26 @@
+version: '3.8'
+
+services:
+  wso2is:
+    image: wso2/wso2is:7.0.0
+    container_name: wso2is-local
+    ports:
+      - "9444:9443" # Exposing IS HTTPS management console on 9444 to avoid conflict
+    environment:
+      - JVM_MEM_OPTS=-Xms1g -Xmx2g
+    volumes:
+      - ./is-conf/deployment.toml:/home/wso2carbon/wso2is-7.0.0/repository/conf/deployment.toml
+    restart: unless-stopped
+
+  wso2apim:
+    image: wso2/wso2am:4.3.0
+    container_name: wso2apim-local
+    ports:
+      - "9443:9443" # APIM HTTPS management console / Portal
+      - "8243:8243" # APIM HTTPS Gateway (where APIs are called)
+      - "8280:8280" # APIM HTTP Gateway
+    environment:
+      - JVM_MEM_OPTS=-Xms1g -Xmx2g
+    volumes:
+      - ./apim-conf/deployment.toml:/home/wso2carbon/wso2am-4.3.0/repository/conf/deployment.toml
+    restart: unless-stopped
