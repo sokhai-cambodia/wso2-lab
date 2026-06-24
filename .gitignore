@@ -6,3 +6,7 @@ Thumbs.db
 .idea/
 .env
 certs/*.key
+.claude/settings.local.json
+frontend/.env.local
+frontend/.next/
+frontend/node_modules/

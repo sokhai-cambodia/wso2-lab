@@ -42,9 +42,60 @@ services:
     volumes:
       - ./libs/postgresql-42.7.3.jar:/home/wso2carbon/wso2am-4.3.0/repository/components/lib/postgresql-42.7.3.jar
       - ./config/apim/deployment.toml:/home/wso2carbon/wso2am-4.3.0/repository/conf/deployment.toml
+      # Phase 5, M2: Custom mediation sequence — injected at container startup
+      - ./config/apim/sequences/custom-header-sequence.xml:/home/wso2carbon/wso2am-4.3.0/repository/deployment/server/synapse-configs/default/sequences/custom-header-sequence.xml
     restart: unless-stopped
     networks:
       - wso2-network
+
+  # Phase 5, M3: Async event queue — receives APIM gateway events
+  rabbitmq:
+    image: rabbitmq:3-management
+    container_name: wso2-rabbitmq
+    ports:
+      - "5672:5672"    # AMQP protocol
+      - "15672:15672"  # Management UI (guest / guest)
+    networks:
+      - wso2-network
+
+  # FastAPI backend — owns IS credentials, handles auth flow + API resource endpoints
+  backend:
+    build: ./backend
+    container_name: wso2-backend
+    ports:
+      - "8000:8000"
+    environment:
+      # WSO2 IS — broker for GitHub federated login
+      - WSO2_IS_URL=https://wso2is-local:9444
+      - WSO2_IS_PUBLIC_URL=https://localhost:9444
+      - WSO2_IS_CLIENT_ID=${WSO2_IS_CLIENT_ID}
+      - WSO2_IS_CLIENT_SECRET=${WSO2_IS_CLIENT_SECRET}
+      # Name of the GitHub connection in IS (Connections tab — must match exactly)
+      - GITHUB_IDP_NAME=${GITHUB_IDP_NAME:-GitHub}
+      # WSO2 APIM — URL used only to load JWKS for X-JWT-Assertion verification
+      - WSO2_APIM_URL=https://wso2apim:9443
+      # OAuth callback URL — must match IS registered callback (browser-accessible)
+      - AUTH_CALLBACK_URL=http://localhost:3000/callback
+      - FRONTEND_URL=http://localhost:3000
+    networks:
+      - wso2-network
+    depends_on:
+      - wso2apim
+
+  # Next.js frontend — calls backend for auth, APIM gateway directly for APIs
+  frontend:
+    build: ./frontend
+    container_name: wso2-frontend
+    ports:
+      - "3000:3000"
+    environment:
+      # Browser-accessible URLs (localhost because browser calls from host machine)
+      - NEXT_PUBLIC_BACKEND_URL=http://localhost:8000
+      - NEXT_PUBLIC_APIM_GATEWAY_URL=https://localhost:8243
+    networks:
+      - wso2-network
+    depends_on:
+      - backend
 
 networks:
   wso2-network:

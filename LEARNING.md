@@ -12,6 +12,9 @@
 | Phase 2 | Core Synthesis (The Integrated Cluster) | ✅ Complete |
 | Phase 3 | Identity Brokerage & Federation | ✅ Complete |
 | Phase 4 | State Persistence & Production Database Separation | ✅ Complete |
+| Phase 5 | Gateway Operations & Traffic Control | ✅ Complete |
+| Phase 6 | Advanced Security & Token Engineering | ✅ Complete |
+| Phase 7 | Production Auth — IS as External Key Manager | ✅ Complete |
 
 ---
 
@@ -278,13 +281,10 @@ driver = "org.postgresql.Driver"
 
 ## 🔴 Phase 5: Gateway Operations & Traffic Control
 
-> **Status: 🔲 Planned — Continue from office**
-
-### What You Will Learn
-- How to protect backend microservices from traffic overload
-- Rate limiting and throttling at multiple levels
-- Custom mediation logic at the gateway
-- Async event handling with message queues
+### What You Learned
+- How to protect backend microservices from traffic overload using throttling policies
+- How to inject custom Synapse mediation sequences into gateway traffic
+- How to add an async event queue (RabbitMQ) so gateway events are decoupled from the gateway process
 
 ### Milestone 1: Rate Limiting Tiers (Throttling Policies)
 
@@ -296,22 +296,31 @@ WSO2 APIM supports throttling at 3 levels:
 | Application Level | Limit requests per registered app |
 | Resource Level | Limit requests per individual endpoint |
 
-**Steps:**
+**Config change (`config/apim/deployment.toml`):**
+```toml
+[apim.throttling]
+enable_data_publishing = true
+enable_policy_deploy = true
+enable_blacklist_condition = true
+enable_persistence = true
+```
+
+**Steps to create a policy (Admin UI):**
 1. Go to `https://localhost:9443/admin`
 2. Navigate to **Rate Limiting → Advanced Policies**
 3. Create a new policy (e.g. `10PerMin` — 10 requests per minute)
-4. Apply it to your API via **Publisher → API → Runtime → Subscription Tiers**
+4. Apply it via **Publisher → API → Runtime → Subscription Tiers**
 
 **Test throttling with curl:**
 ```bash
 for i in {1..15}; do
-  curl -X GET "https://localhost:8243/your-api/v1/resource" \
+  curl -sk -X GET "https://localhost:8243/your-api/v1/resource" \
     -H "Authorization: Bearer YOUR_TOKEN"
   echo "Request $i"
 done
 ```
 
-After the limit is hit, APIM returns:
+After the limit is hit, APIM returns HTTP 429:
 ```json
 {
   "fault": {
@@ -322,22 +331,32 @@ After the limit is hit, APIM returns:
 }
 ```
 
-### Milestone 2: Custom Mediation Logic
+### Milestone 2: Custom Mediation Logic (Header Injection)
 
-Use **Velocity templates** or **mediation sequences** to intercept and transform gateway traffic.
+A Synapse XML sequence that the gateway applies to every forwarded request — useful for injecting tracing headers, routing hints, or auth metadata that backends rely on.
 
-**Example: Add custom header to all requests**
-1. Go to **Publisher → API → Runtime → Request Mediation**
-2. Add a custom sequence:
+**File: `config/apim/sequences/custom-header-sequence.xml`**
 ```xml
-<sequence xmlns="http://ws.apache.org/ns/synapse">
-  <header name="X-Custom-Header" value="WSO2-Gateway" scope="transport"/>
+<sequence name="custom-header-sequence" xmlns="http://ws.apache.org/ns/synapse">
+    <header name="X-Custom-Header" value="WSO2-Gateway" scope="transport"/>
+    <header name="X-Gateway-Version" value="4.3.0" scope="transport"/>
 </sequence>
 ```
 
-### Milestone 3: Async Event Handling (RabbitMQ + Celery)
+This file is **volume-mounted** into the APIM container at:
+```
+/home/wso2carbon/wso2am-4.3.0/repository/deployment/server/synapse-configs/default/sequences/
+```
 
-Connect message queues to handle events when an application is created/updated.
+**Activate in the Publisher UI:**
+1. Go to **Publisher → your API → Runtime**
+2. Under **Request Mediation** → click the pencil icon
+3. Choose **Select Existing Sequence** → pick `custom-header-sequence`
+4. Save and re-deploy the API
+
+### Milestone 3: Async Event Handling (RabbitMQ)
+
+RabbitMQ is added to the stack as the message broker for gateway lifecycle events. The architecture pattern: services publish events to a queue, downstream consumers process them independently — completely decoupled from the gateway.
 
 **docker-compose.yml addition:**
 ```yaml
@@ -345,84 +364,87 @@ rabbitmq:
   image: rabbitmq:3-management
   container_name: wso2-rabbitmq
   ports:
-    - "5672:5672"
-    - "15672:15672"
+    - "5672:5672"    # AMQP
+    - "15672:15672"  # Management UI
   networks:
     - wso2-network
 ```
 
-**Event listener config in APIM deployment.toml:**
-```toml
-[[event_handler]]
-name = "userPostSelfRegistration"
-subscriptions = ["POST_ADD_USER"]
-```
+**Verify RabbitMQ is running:** Navigate to `http://localhost:15672` (login: `guest` / `guest`).
+
+> **Important limitation in WSO2 4.3.0 / IS 7.0.0:** WSO2 does **not** automatically publish events to RabbitMQ. The `[[event_handler]]` in APIM's deployment.toml is an internal user-registration notification hook — it has no connection to RabbitMQ. A real integration requires a custom Java event handler that reads WSO2's internal events and publishes them via AMQP. For the lab, RabbitMQ is confirmed running and operable; the custom publisher is the next extension step.
+
+### Key Concepts
+- **Throttling** protects backend services from overload; APIM enforces quotas before requests ever reach the backend
+- **Synapse sequences** let you transform requests/responses at the gateway without touching backend code
+- **Event-driven architecture** keeps the gateway lean — lifecycle events land in a queue and consumers process them at their own pace; WSO2 4.3.0 requires a custom Java event handler to publish to RabbitMQ (not built-in)
 
 ---
 
 ## 🟣 Phase 6: Advanced Security & Token Engineering
 
-> **Status: 🔲 Planned — Continue from office**
-
-### What You Will Learn
-- Zero-trust gateway security with mTLS
-- Token transformation: opaque token → signed JWT
-- Fine-grained access control with OAuth scopes bound to roles
+### What You Learned
+- Zero-trust gateway security with per-API mutual TLS (mTLS)
+- Token transformation: APIM signs a JWT and forwards it to the backend so the backend verifies locally
+- Fine-grained access control: OAuth scopes bound to IS roles control which users reach which endpoints
 
 ### Milestone 1: Mutual TLS (mTLS) at the Gateway Edge
 
-mTLS requires **both client and server** to present certificates — not just the server.
+Normal HTTPS: the server proves its identity to the client.  
+mTLS: **both sides** present certificates. A client without a valid cert is rejected at the TLS handshake — no HTTP code ever runs.
 
 **Step 1: Generate client certificate**
 ```bash
-# Generate client key and certificate
-openssl genrsa -out client.key 2048
-openssl req -new -key client.key -out client.csr -subj "/CN=client/O=wso2"
-openssl x509 -req -days 365 -in client.csr -signkey client.key -out client.crt
+bash scripts/generate-certs.sh
+# writes: certs/client.key (gitignored), certs/client.csr, certs/client.crt
 ```
 
-**Step 2: Import client cert into WSO2 truststore**
+**Step 2: Enable mTLS per-API in the Publisher UI (recommended for lab)**
+1. Go to **Publisher → your API → Runtime**
+2. Under **Transport Level Security** → enable **Mutual SSL**
+3. Upload `certs/client.crt` as a trusted client certificate
+4. Re-deploy the API
+
+**Step 3: Test**
 ```bash
-keytool -import -alias client \
-  -file client.crt \
-  -keystore client-truststore.jks \
-  -storepass wso2carbon
+# With client cert — succeeds (HTTP 200)
+curl -sk --cert certs/client.crt --key certs/client.key \
+  https://localhost:8243/your-api/v1/resource \
+  -H "Authorization: Bearer YOUR_TOKEN"
+
+# Without client cert — rejected at TLS layer
+curl -sk https://localhost:8243/your-api/v1/resource \
+  -H "Authorization: Bearer YOUR_TOKEN"
+# → SSL handshake failure (no HTTP response at all)
 ```
 
-**Step 3: Enable mTLS in APIM deployment.toml**
-```toml
-[transport.https]
-enable_client_auth = true
-```
-
-**Step 4: Test with mTLS curl**
-```bash
-curl --cert client.crt --key client.key \
-  https://localhost:8243/your-api/v1/resource
-```
+> **Why not enable_client_auth = true globally?**  
+> Setting it globally in deployment.toml forces mTLS on ALL HTTPS connections, including the Publisher, Admin, and Dev Portal UIs — which breaks the web console. Per-API mTLS in the Publisher is the production-correct approach.
 
 ### Milestone 2: Token Transformation (Opaque → JWT)
 
-This is the most critical pattern for microservices security:
+The most important pattern for microservices security. The client never has to present a JWT — APIM transforms the token before it reaches the backend.
 
 ```
 Client App
     │
-    │  (1) sends opaque reference token
+    │  (1) sends opaque reference token to APIM
     ▼
 WSO2 APIM Gateway
     │
-    │  (2) validates token against WSO2 IS
-    │  (3) exchanges for signed JWT with user claims
+    │  (2) validates opaque token against WSO2 IS
+    │  (3) generates signed JWT with user claims
+    │  (4) forwards request with X-JWT-Assertion: <signed JWT>
     ▼
-Backend FastAPI Microservice
+Backend (backend/main.py — FastAPI)
     │
-    │  (4) receives JWT, verifies signature locally
+    │  (5) fetches APIM JWKS from https://wso2apim:9443/oauth2/jwks
+    │  (6) verifies JWT signature locally — no round-trip to IS
     ▼
     ✅ Zero-trust verified request
 ```
 
-**Enable JWT generation in APIM deployment.toml:**
+**Config change (`config/apim/deployment.toml`):**
 ```toml
 [apim.jwt]
 enable = true
@@ -433,59 +455,62 @@ enable_user_claims = true
 claim_dialect = "http://wso2.org/claims"
 ```
 
-**FastAPI JWT verification example:**
-```python
-from fastapi import FastAPI, Header, HTTPException
-import jwt
+**Backend (`backend/main.py`):**  
+The FastAPI service fetches APIM's public keys from the JWKS endpoint and verifies every JWT locally. See `backend/main.py` for the full implementation.
 
-app = FastAPI()
+**Test:**
+```bash
+# Hit the backend through APIM (JWT is injected automatically)
+curl -sk https://localhost:8243/your-api/v1/secure-resource \
+  -H "Authorization: Bearer YOUR_OPAQUE_TOKEN"
+# → {"user": "john@example.com", "claims": {...}}
 
-WSO2_PUBLIC_KEY = "your-wso2-public-key"
-
-@app.get("/secure-resource")
-async def secure_resource(x_jwt_assertion: str = Header(None)):
-    if not x_jwt_assertion:
-        raise HTTPException(status_code=401, detail="Missing JWT")
-    try:
-        payload = jwt.decode(
-            x_jwt_assertion,
-            WSO2_PUBLIC_KEY,
-            algorithms=["RS256"]
-        )
-        return {"user": payload.get("sub"), "claims": payload}
-    except jwt.ExpiredSignatureError:
-        raise HTTPException(status_code=401, detail="Token expired")
-    except jwt.InvalidTokenError:
-        raise HTTPException(status_code=401, detail="Invalid token")
+# Hit the backend directly (no JWT injected — returns 401)
+curl http://localhost:8000/secure-resource
+# → {"detail": "Missing X-JWT-Assertion header"}
 ```
 
 ### Milestone 3: OAuth Scopes Bound to Roles
 
-Fine-grained access control: only users with the correct **role** can access specific API resources.
+Fine-grained authorization at the resource level. A JWT is only issued with a scope if the user has the matching role. APIM enforces the scope on every request — the backend receives nothing it isn't authorized to handle.
 
-**Step 1: Create a scope in WSO2 IS**
+> **Key setup fact (Phase 6):** At this phase APIM used its **built-in Key Manager** — IS KM integration was not yet configured. API access tokens were issued by APIM and scopes were **Local Scopes in APIM Publisher**. IS provided only the user store. Phase 7 upgrades this to full IS Key Manager integration.
+
+**Step 1: Create role in WSO2 IS 7.0.0**
 1. Go to `https://localhost:9444/console`
-2. Navigate to **API Resources → Scopes**
-3. Create scope: `read:reports` bound to role `analyst`
+2. Navigate to **User Management → Roles** → click **Add Role**
+3. Create role `analyst`
+4. Create user `analyst-user` in **User Management → Users** → **Add User**
+5. Assign role separately: Users → click `analyst-user` → **Roles** tab → **Add Roles** → tick `analyst`
 
-**Step 2: Bind scope to API resource in APIM**
-1. Go to **Publisher → API → Resources**
-2. Select a resource (e.g. `GET /reports`)
-3. Under **OAuth2 Security** → add scope `read:reports`
+**Step 2: Create scope in APIM Publisher (not IS)**
+1. Publisher → your API → **Local Scopes** → **Add New Local Scope**
+2. Scope Key: `read:reports`, Roles: `analyst`
+3. Save
 
-**Step 3: Test scope enforcement**
+**Step 3: Bind scope to API resource**
+1. Publisher → your API → **Resources**
+2. Expand `GET /reports` → set **Operation Scope** to `read:reports`
+3. Re-deploy the API
+
+**Step 4: Test scope enforcement — token comes from APIM (port 9443)**
 ```bash
-# Request token with scope
-curl -X POST https://localhost:9444/oauth2/token \
-  -d "grant_type=password&username=testuser&password=testpass&scope=read:reports" \
-  -u "client_id:client_secret"
+# Get token for analyst-user — APIM checks IS role, finds analyst → grants scope
+curl -sk -X POST https://localhost:9443/oauth2/token \
+  -d "grant_type=password&username=analyst-user&password=Test%401234&scope=read:reports" \
+  -u "CLIENT_ID:CLIENT_SECRET" \
+  -H "Content-Type: application/x-www-form-urlencoded"
+# → token includes read:reports scope → /reports returns 200
 
-# Use scoped token
-curl -X GET https://localhost:8243/your-api/v1/reports \
-  -H "Authorization: Bearer SCOPED_TOKEN"
+# Admin has no analyst role → scope not granted → /reports returns 403
 ```
 
-If the user doesn't have the `analyst` role, APIM returns `403 Forbidden`.
+### Key Concepts
+- **mTLS at the API level** — per-API mutual TLS is the production pattern; global transport mTLS breaks the management UI
+- **JWKS endpoint** — WSO2 APIM exposes `GET /oauth2/jwks` so any backend can verify JWTs without calling IS at runtime
+- **Opaque → JWT transformation** — clients send cheap opaque tokens; the gateway handles the expensive validation and enriches the downstream request
+- **Scope ≠ Role** — a scope is a permission label on the API resource (defined in APIM Local Scopes); a role is assigned to users in IS; APIM maps role → scope at token issuance time
+- **Built-in KM vs. IS KM** — when APIM uses its built-in Key Manager (default), scopes live in APIM Publisher; when IS is the external KM, scopes can be managed in IS. Check whether `[apim.key_manager] service_url` is set to know which mode you are in
 
 ---
 
@@ -495,23 +520,85 @@ wso2-lab/
 ├── README.md
 ├── LEARNING.md
 ├── docker-compose.yml
+├── is_public.crt                       ← WSO2 IS public certificate
 ├── libs/
 │   └── postgresql-42.7.3.jar
 ├── config/
 │   ├── is/
 │   │   └── deployment.toml
 │   └── apim/
-│       └── deployment.toml
-├── certs/                    # Phase 6
-│   ├── client.key
+│       ├── deployment.toml
+│       └── sequences/
+│           └── custom-header-sequence.xml   ← Phase 5: Synapse mediation
+├── certs/                              ← Phase 6: mTLS certificates
+│   ├── client.key                          (gitignored — never commit)
 │   ├── client.crt
 │   └── client.csr
+├── backend/                            ← Phase 6: FastAPI JWT-verified service
+│   ├── main.py
+│   ├── requirements.txt
+│   └── Dockerfile
 └── scripts/
+    ├── generate-certs.sh               ← Phase 6: mTLS cert generation
+    ├── setup-key-manager.sh            ← Phase 7: IS cert exchange + Key Manager setup guide
     ├── identity_correct.sql
     ├── consent.sql
     ├── shared.sql
     └── apim.sql
 ```
+
+---
+
+---
+
+## 🟤 Phase 7: Production Auth — IS as External Key Manager
+
+### What You Learned
+- How to configure **WSO2 IS as the APIM external Key Manager** — IS owns all token operations
+- **Java truststore certificate exchange** between APIM and IS to resolve `SSLHandshakeException`
+- Why the frontend can now send IS tokens **directly to the APIM gateway** — no backend proxy
+- The full **DCR (Dynamic Client Registration)** endpoint set required by APIM to talk to IS
+- Why backend sessions (`_sessions` dict) are an anti-pattern and how IS introspection replaces them
+
+### Architecture Change
+
+**Before (lab shortcut):**
+```
+Frontend → Backend /api-test/{endpoint}
+             ↓ client_credentials token swap
+           APIM Gateway → Backend resource
+```
+
+**After (production):**
+```
+Frontend → APIM Gateway (IS access_token)
+             ↓ IS introspects token (Key Manager)
+           Backend resource endpoint
+```
+
+### Key Manager Endpoints
+
+All use Docker service name `wso2is` (container-to-container, not `localhost`):
+
+| Endpoint | URL |
+|----------|-----|
+| Issuer | `https://wso2is:9444/oauth2/token` |
+| Client Registration | `https://wso2is:9444/api/identity/oauth2/dcr/v1.1/register` |
+| Introspection | `https://wso2is:9444/oauth2/introspect` |
+| Token | `https://wso2is:9444/oauth2/token` |
+| Revoke | `https://wso2is:9444/oauth2/revoke` |
+| UserInfo | `https://wso2is:9444/scim2/Me` |
+| Authorize | `https://wso2is:9444/oauth2/authorize` |
+| Scope Management | `https://wso2is:9444/api/identity/oauth2/v1.0/scopes` |
+
+### Key Concepts
+- **IS as Key Manager** = APIM delegates all OAuth operations to IS; one token works everywhere
+- **Certificate exchange is required** — APIM's JVM rejects self-signed IS certs without importing them into `client-truststore.jks`
+- **`wso2is` not `localhost`** — Key Manager endpoints must use Docker service names for container-to-container calls
+- **DCR** — APIM auto-registers itself as an OAuth client in IS using the Client Registration endpoint; no manual IS app creation needed for APIM
+- **CORS on gateway** — when the browser calls APIM directly, the API must allow the frontend origin
+- **Stateless backend** — IS introspects tokens on every request; no custom session storage; any backend instance can serve any request
+- **Logout revokes at IS** — `POST /oauth2/revoke` invalidates the token at the source; no dict to clean up
 
 ---
 
@@ -527,7 +614,16 @@ wso2-lab/
 8. **Throttling has 3 levels** — API, Application, and Resource level policies
 9. **Token transformation is zero-trust** — never trust raw tokens in microservices; always exchange to JWT
 10. **Scopes + Roles = fine-grained access** — bind scopes to roles for per-endpoint authorization
+11. **mTLS per-API, not globally** — enabling client auth globally breaks the management UI; use per-API mTLS in Publisher
+12. **JWKS > static public key** — backends should fetch signing keys from the APIM JWKS endpoint, not hardcode them
+13. **Synapse sequences are volume-mounted** — drop the XML file into the sequences directory and activate in the UI without restarting APIM
+14. **RabbitMQ decouples events** — gateway lifecycle events (user created, app registered) land in a queue; consumers process independently
+15. **IS as Key Manager eliminates token swapping** — frontend sends IS token directly to APIM; no backend credential proxy needed
+16. **Java truststore exchange is mandatory** — APIM's JVM won't trust self-signed IS certs without importing them into `client-truststore.jks` via `keytool`
+17. **DCR auto-registers APIM with IS** — once Key Manager is saved, APIM uses the Client Registration endpoint to create its own IS OAuth client dynamically
+18. **Stateless auth via IS introspection** — no in-memory session store; every backend instance validates tokens by calling IS introspect
+19. **CORS must be enabled per-API** — when the browser calls APIM gateway directly, each API must allowlist the frontend origin in APIM Publisher → Runtime → CORS
 
 ---
 
-*Document complete — Phases 1 through 6 covered.*
+*Document complete — Phases 1 through 7 covered.*

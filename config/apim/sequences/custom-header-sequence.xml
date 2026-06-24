@@ -1,0 +1,5 @@
+<sequence name="custom-header-sequence" xmlns="http://ws.apache.org/ns/synapse">
+    <!-- Inject a gateway-origin header on every outbound request to the backend -->
+    <header name="X-Custom-Header" value="WSO2-Gateway" scope="transport"/>
+    <header name="X-Gateway-Version" value="4.3.0" scope="transport"/>
+</sequence>
