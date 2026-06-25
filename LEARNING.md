@@ -15,6 +15,7 @@
 | Phase 5 | Gateway Operations & Traffic Control | ✅ Complete |
 | Phase 6 | Advanced Security & Token Engineering | ✅ Complete |
 | Phase 7 | Production Auth — IS as External Key Manager | ✅ Complete |
+| Phase 8 | Configuration Audit & Hardening | ✅ Complete |
 
 ---
 
@@ -510,7 +511,7 @@ curl -sk -X POST https://localhost:9443/oauth2/token \
 - **JWKS endpoint** — WSO2 APIM exposes `GET /oauth2/jwks` so any backend can verify JWTs without calling IS at runtime
 - **Opaque → JWT transformation** — clients send cheap opaque tokens; the gateway handles the expensive validation and enriches the downstream request
 - **Scope ≠ Role** — a scope is a permission label on the API resource (defined in APIM Local Scopes); a role is assigned to users in IS; APIM maps role → scope at token issuance time
-- **Built-in KM vs. IS KM** — when APIM uses its built-in Key Manager (default), scopes live in APIM Publisher; when IS is the external KM, scopes can be managed in IS. Check whether `[apim.key_manager] service_url` is set to know which mode you are in
+- **Built-in KM vs. IS KM** — when APIM uses its built-in Key Manager (default), scopes live in APIM Publisher; when IS is the external KM, scopes can be managed in IS. Check whether a `[[apim.jwt.issuer]]` block pointing at IS is present to know which mode you are in
 
 ---
 
@@ -587,7 +588,7 @@ All use Docker service name `wso2is` (container-to-container, not `localhost`):
 | Introspection | `https://wso2is:9444/oauth2/introspect` |
 | Token | `https://wso2is:9444/oauth2/token` |
 | Revoke | `https://wso2is:9444/oauth2/revoke` |
-| UserInfo | `https://wso2is:9444/scim2/Me` |
+| UserInfo | `https://wso2is:9444/oauth2/userinfo` |
 | Authorize | `https://wso2is:9444/oauth2/authorize` |
 | Scope Management | `https://wso2is:9444/api/identity/oauth2/v1.0/scopes` |
 
@@ -626,4 +627,35 @@ All use Docker service name `wso2is` (container-to-container, not `localhost`):
 
 ---
 
-*Document complete — Phases 1 through 7 covered.*
+---
+
+## 🔧 Phase 8: Configuration Audit & Hardening
+
+### What You Learned
+- How misplaced config blocks silently fail when IS is the external Key Manager
+- Why the UserInfo endpoint for a Key Manager must be the OIDC standard endpoint, not a SCIM endpoint
+- How `[[apim.jwt.issuer]]` differs from `[apim.jwt]` and why both are needed
+- The importance of OAuth state validation for CSRF protection in custom auth flows
+
+### Changes Applied
+
+| File | Change | Reason |
+|------|--------|--------|
+| `config/apim/deployment.toml` | `[apim.ai] enable = false` | Empty token/endpoint caused startup errors |
+| `config/apim/deployment.toml` | Removed `[oauth.grant_type.token_exchange]` | IS-level config — silently ignored in APIM |
+| `config/apim/deployment.toml` | Removed `[[event_handler]]` and `[service_provider]` | IS-level blocks copy-pasted into APIM config |
+| `config/apim/deployment.toml` | Added `[[apim.jwt.issuer]]` pointing at IS JWKS | Required for APIM to validate self-contained IS JWTs |
+| `config/is/deployment.toml` | Added `[oauth.grant_type.token_exchange]` | Token exchange must be enabled on IS, not APIM |
+| `scripts/setup-key-manager.sh` | `UserInfo: /oauth2/userinfo` (was `/scim2/Me`) | SCIM endpoint is not OIDC-compliant; APIM expects UserInfo |
+| `backend/main.py` | OAuth state stored and validated in `/auth/exchange` | State was generated but never checked — CSRF protection was non-functional |
+
+### Key Concepts
+- **`[apim.jwt]`** — controls the _outbound_ JWT APIM injects into backend requests (X-JWT-Assertion). Always lives in APIM.
+- **`[[apim.jwt.issuer]]`** — tells APIM how to validate _incoming_ JWT access tokens from an external issuer. Required when IS is the Key Manager.
+- **`[oauth.grant_type.*]`** — all grant type configs belong in IS when IS is the Key Manager. APIM does not process these when it delegates tokens.
+- **UserInfo vs. SCIM** — `GET /oauth2/userinfo` returns OIDC claims; `GET /scim2/Me` returns SCIM user attributes. APIM Key Manager integration expects the OIDC UserInfo endpoint.
+- **OAuth state parameter** — state must be stored server-side and validated on code exchange to prevent cross-site request forgery; generating a state without validating it provides no protection.
+
+---
+
+*Document complete — Phases 1 through 8 covered.*

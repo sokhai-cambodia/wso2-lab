@@ -105,9 +105,7 @@ enable = false
 auth_token = ""
 
 [apim.ai]
-enable = true
-token = ""
-endpoint = ""
+enable = false
 
 [apim.key_manager]
 enable_apikey_subscription_validation = true
@@ -138,6 +136,12 @@ signing_algorithm = "SHA256withRSA"
 enable_user_claims = true
 claims_extractor_impl = "org.wso2.carbon.apimgt.impl.token.ExtendedDefaultClaimsRetriever"
 use_sha256_hash = false
+
+# Validate self-contained JWT access tokens issued by the external IS Key Manager
+[[apim.jwt.issuer]]
+name = "https://wso2is:9444/oauth2/token"
+[apim.jwt.issuer.jwks]
+url  = "https://wso2is:9444/oauth2/jwks"
 
 #[apim.oauth_config]
 #enable_outbound_auth_header = false
@@ -253,13 +257,6 @@ enable_persistence = true
 #persistent_notifier.username = "root"
 #persistent_notifier.password = "root"
 
-[[event_handler]]
-name="userPostSelfRegistration"
-subscriptions=["POST_ADD_USER"]
-
-[service_provider]
-sp_name_regex = "^[\\sa-zA-Z0-9._-]*$"
-
 [database.local]
 url = "jdbc:h2:./repository/database/WSO2CARBON_DB;DB_CLOSE_ON_EXIT=FALSE"
 
@@ -273,11 +270,6 @@ notification_endpoint = "https://localhost:${mgt.transport.https.port}/internal/
 username = "${admin.username}"
 password = "${admin.password}"
 'header.X-WSO2-KEY-MANAGER' = "default"
-
-[oauth.grant_type.token_exchange]
-enable = true
-allow_refresh_tokens = true
-iat_validity_period = "1h"
 
 #[integration.transaction_counter]
 #enable = true

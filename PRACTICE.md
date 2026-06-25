@@ -935,7 +935,7 @@ This is a manual one-time step. APIM uses these endpoints to delegate all token 
 | Introspection Endpoint | `https://wso2is:9444/oauth2/introspect` |
 | Token Endpoint | `https://wso2is:9444/oauth2/token` |
 | Revoke Endpoint | `https://wso2is:9444/oauth2/revoke` |
-| UserInfo Endpoint | `https://wso2is:9444/scim2/Me` |
+| UserInfo Endpoint | `https://wso2is:9444/oauth2/userinfo` |
 | Authorize Endpoint | `https://wso2is:9444/oauth2/authorize` |
 | Scope Management Endpoint | `https://wso2is:9444/api/identity/oauth2/v1.0/scopes` |
 

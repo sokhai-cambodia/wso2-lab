@@ -35,6 +35,11 @@ file_name = "client-truststore.jks"
 password = "wso2carbon"
 type = "JKS"
 
+[oauth.grant_type.token_exchange]
+enable = true
+allow_refresh_tokens = true
+iat_validity_period = "1h"
+
 [account_recovery.endpoint.auth]
 hash = "66cd9688a2ae068244ea01e70f0e230f5623b7fa4cdecb65070a09ec06452262"
 

@@ -36,7 +36,7 @@ echo "  4. Client Reg Endpoint: https://wso2is:9444/api/identity/oauth2/dcr/v1.1
 echo "  5. Introspection:       https://wso2is:9444/oauth2/introspect"
 echo "  6. Token Endpoint:      https://wso2is:9444/oauth2/token"
 echo "  7. Revoke Endpoint:     https://wso2is:9444/oauth2/revoke"
-echo "  8. UserInfo Endpoint:   https://wso2is:9444/scim2/Me"
+echo "  8. UserInfo Endpoint:   https://wso2is:9444/oauth2/userinfo"
 echo "  9. Authorize Endpoint:  https://wso2is:9444/oauth2/authorize"
 echo " 10. Scope Mgmt:          https://wso2is:9444/api/identity/oauth2/v1.0/scopes"
 echo "  → Save"

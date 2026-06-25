@@ -47,9 +47,10 @@ FRONTEND_URL      = os.getenv("FRONTEND_URL",      "http://localhost:3000")
 APIM_JWKS_URL     = f"{APIM_URL}/oauth2/jwks"
 
 # ---------------------------------------------------------------------------
-# In-memory store — APIM signing keys only (no session state)
+# In-memory stores
 # ---------------------------------------------------------------------------
-_public_keys: dict = {}   # kid → RSA public key
+_public_keys: dict = {}    # kid → RSA public key
+_pending_states: set = set()  # short-lived OAuth state values for CSRF protection
 
 # ---------------------------------------------------------------------------
 # App + CORS
@@ -200,12 +201,14 @@ def reports(x_jwt_assertion: str = Header(default=None)):
 def auth_login_url():
     if not IS_CLIENT_ID:
         raise HTTPException(status_code=503, detail="WSO2_IS_CLIENT_ID not configured.")
+    state = secrets.token_urlsafe(16)
+    _pending_states.add(state)
     params = urllib.parse.urlencode({
         "response_type": "code",
         "client_id":     IS_CLIENT_ID,
         "redirect_uri":  AUTH_CALLBACK_URL,
         "scope":         "openid profile email",
-        "state":         secrets.token_urlsafe(16),
+        "state":         state,
         "fidp":          GITHUB_IDP_NAME,
     })
     return {"url": f"{IS_PUBLIC_URL}/oauth2/authorize?{params}"}
@@ -218,6 +221,10 @@ class ExchangeRequest(BaseModel):
 
 @app.post("/auth/exchange")
 async def auth_exchange(body: ExchangeRequest):
+    if body.state not in _pending_states:
+        raise HTTPException(status_code=400, detail="Invalid or expired state parameter.")
+    _pending_states.discard(body.state)
+
     async with httpx.AsyncClient(verify=False) as client:
         token_res = await client.post(
             f"{IS_URL}/oauth2/token",
