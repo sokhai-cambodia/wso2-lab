@@ -49,6 +49,13 @@ wso2-lab/
    ```
    On PowerShell, use `Get-Content` instead of `<` redirection.
 
+   ```bash
+   Get-Content scripts/shared.sql          | docker exec -e PGPASSWORD=wso2123 -i wso2-postgres psql -U wso2 -d shared_db
+   Get-Content scripts/identity_correct.sql | docker exec -e PGPASSWORD=wso2123 -i wso2-postgres psql -U wso2 -d identity_db
+   Get-Content scripts/consent.sql         | docker exec -e PGPASSWORD=wso2123 -i wso2-postgres psql -U wso2 -d identity_db
+   Get-Content scripts/apim.sql            | docker exec -e PGPASSWORD=wso2123 -i wso2-postgres psql -U wso2 -d apim_db
+   ```
+
 4. Start WSO2 IS and APIM:
    ```bash
    docker compose up -d
