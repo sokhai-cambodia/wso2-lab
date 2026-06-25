@@ -5,7 +5,7 @@ services:
     image: postgres:15
     container_name: wso2-postgres
     ports:
-      - "5432:5432"
+      - "${POSTGRES_PORT:-5433}:5432"
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-wso2}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-wso2123}
