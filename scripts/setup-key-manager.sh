@@ -1,7 +1,7 @@
 #!/bin/bash
 # Sets up WSO2 IS as the external Key Manager for WSO2 APIM.
 # Run once after both containers are healthy.
-set -e
+set -euo pipefail
 
 echo "→ Extracting IS public certificate..."
 docker exec wso2is-local keytool -exportcert \

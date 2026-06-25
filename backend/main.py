@@ -19,6 +19,7 @@ All WSO2 credentials live here. Frontend needs NEXT_PUBLIC_BACKEND_URL + NEXT_PU
 import os
 import json
 import ssl
+import time
 import secrets
 import urllib.parse
 import urllib.request
@@ -49,8 +50,24 @@ APIM_JWKS_URL     = f"{APIM_URL}/oauth2/jwks"
 # ---------------------------------------------------------------------------
 # In-memory stores
 # ---------------------------------------------------------------------------
-_public_keys: dict = {}    # kid → RSA public key
-_pending_states: set = set()  # short-lived OAuth state values for CSRF protection
+_public_keys: dict = {}          # kid → RSA public key
+_pending_states: dict[str, float] = {}  # state → expiry (monotonic time)
+_STATE_TTL = 300  # seconds; abandoned flows (tab closed mid-redirect) are cleaned up on next use
+
+
+def _add_state(state: str) -> None:
+    _pending_states[state] = time.monotonic() + _STATE_TTL
+
+
+def _consume_state(state: str) -> bool:
+    """Return True and remove the state if present and not expired. Cleans up stale entries."""
+    expiry = _pending_states.pop(state, None)
+    if expiry is None or time.monotonic() > expiry:
+        return False
+    now = time.monotonic()
+    for k in [k for k, v in _pending_states.items() if v < now]:
+        del _pending_states[k]
+    return True
 
 # ---------------------------------------------------------------------------
 # App + CORS
@@ -61,6 +78,10 @@ async def lifespan(app: FastAPI):
         _load_jwks()
     except Exception as exc:
         print(f"Warning: JWKS pre-load failed ({exc}). Will retry on first request.")
+    missing = [v for v in ("WSO2_IS_CLIENT_ID", "WSO2_IS_CLIENT_SECRET") if not os.getenv(v)]
+    if missing:
+        print(f"WARNING: Required env vars not set: {', '.join(missing)}")
+        print("  Auth endpoints will fail. Set these in .env and run: docker compose up -d backend")
     yield
 
 
@@ -100,7 +121,7 @@ def _get_bearer(authorization: str | None) -> str:
 
 async def _introspect(token: str) -> dict:
     """Validate IS access token and return its claims. Raises 401 if inactive."""
-    async with httpx.AsyncClient(verify=False) as client:
+    async with httpx.AsyncClient(verify=False, timeout=httpx.Timeout(10.0)) as client:
         res = await client.post(
             f"{IS_URL}/oauth2/introspect",
             data={"token": token},
@@ -156,6 +177,7 @@ def secure_resource(x_jwt_assertion: str = Header(default=None)):
         raise HTTPException(status_code=503, detail="No APIM signing key available.")
 
     try:
+        # verify_aud=False: APIM's X-JWT-Assertion omits the 'aud' claim by design.
         payload = jwt.decode(
             x_jwt_assertion, public_key,
             algorithms=["RS256"], options={"verify_aud": False},
@@ -178,6 +200,7 @@ def reports(x_jwt_assertion: str = Header(default=None)):
     if not x_jwt_assertion:
         raise HTTPException(status_code=401, detail="Missing X-JWT-Assertion.")
     try:
+        # verify_signature=False: APIM enforces the scope gate upstream; backend only reads claims for display.
         payload = jwt.decode(x_jwt_assertion, options={"verify_signature": False})
         return {
             "message": "Reports access granted — read:reports scope verified by APIM",
@@ -202,7 +225,7 @@ def auth_login_url():
     if not IS_CLIENT_ID:
         raise HTTPException(status_code=503, detail="WSO2_IS_CLIENT_ID not configured.")
     state = secrets.token_urlsafe(16)
-    _pending_states.add(state)
+    _add_state(state)
     params = urllib.parse.urlencode({
         "response_type": "code",
         "client_id":     IS_CLIENT_ID,
@@ -221,11 +244,10 @@ class ExchangeRequest(BaseModel):
 
 @app.post("/auth/exchange")
 async def auth_exchange(body: ExchangeRequest):
-    if body.state not in _pending_states:
+    if not _consume_state(body.state):
         raise HTTPException(status_code=400, detail="Invalid or expired state parameter.")
-    _pending_states.discard(body.state)
 
-    async with httpx.AsyncClient(verify=False) as client:
+    async with httpx.AsyncClient(verify=False, timeout=httpx.Timeout(10.0)) as client:
         token_res = await client.post(
             f"{IS_URL}/oauth2/token",
             data={
@@ -268,7 +290,7 @@ async def auth_me(authorization: str = Header(default=None)):
 @app.get("/auth/logout")
 async def auth_logout(authorization: str = Header(default=None)):
     token = _get_bearer(authorization)
-    async with httpx.AsyncClient(verify=False) as client:
+    async with httpx.AsyncClient(verify=False, timeout=httpx.Timeout(10.0)) as client:
         await client.post(
             f"{IS_URL}/oauth2/revoke",
             data={"token": token},

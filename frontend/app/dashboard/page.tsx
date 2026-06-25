@@ -47,13 +47,20 @@ export default function Dashboard() {
       router.replace('/')
       return
     }
-    fetch(`${BACKEND}/auth/me`, { headers: { Authorization: `Bearer ${session}` } })
+    const controller = new AbortController()
+    const timeoutId = setTimeout(() => controller.abort(), 8000)
+    fetch(`${BACKEND}/auth/me`, {
+      headers: { Authorization: `Bearer ${session}` },
+      signal: controller.signal,
+    })
       .then(res => {
+        clearTimeout(timeoutId)
         if (!res.ok) { sessionStorage.clear(); router.replace('/'); return null }
         return res.json()
       })
       .then(data => data && setUser(data))
-      .catch(() => router.replace('/'))
+      .catch(() => { clearTimeout(timeoutId); router.replace('/') })
+    return () => { clearTimeout(timeoutId); controller.abort() }
   }, [router])
 
   async function callApi(endpoint: string) {
@@ -68,7 +75,7 @@ export default function Dashboard() {
       const data = await res.json()
       setResults(r => ({ ...r, [endpoint]: { status: res.status, ok: res.ok, data } }))
     } catch (e) {
-      setResults(r => ({ ...r, [endpoint]: { error: String(e) } }))
+      setResults(r => ({ ...r, [endpoint]: { error: e instanceof Error ? e.message : String(e) } }))
     } finally {
       setLoading(l => ({ ...l, [endpoint]: false }))
     }

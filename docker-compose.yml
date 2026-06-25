@@ -7,13 +7,20 @@ services:
     ports:
       - "5432:5432"
     environment:
-      POSTGRES_USER: wso2
-      POSTGRES_PASSWORD: wso2123
-      POSTGRES_DB: wso2db
+      POSTGRES_USER: ${POSTGRES_USER:-wso2}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-wso2123}
+      POSTGRES_DB: ${POSTGRES_DB:-wso2db}
     volumes:
       - postgres_data:/var/lib/postgresql/data
     networks:
       - wso2-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U wso2 -d wso2db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
 
   wso2is:
     image: wso2/wso2is:7.0.0
@@ -27,8 +34,15 @@ services:
       - ./libs/postgresql-42.7.3.jar:/home/wso2carbon/wso2is-7.0.0/repository/components/lib/postgresql-42.7.3.jar
       - ./config/is/deployment.toml:/home/wso2carbon/wso2is-7.0.0/repository/conf/deployment.toml
     restart: unless-stopped
+    stop_grace_period: 60s
     networks:
       - wso2-network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf https://localhost:9444/api/health-check/v1.0/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 120s
 
   wso2apim:
     image: wso2/wso2am:4.3.0
@@ -45,8 +59,15 @@ services:
       # Phase 5, M2: Custom mediation sequence — injected at container startup
       - ./config/apim/sequences/custom-header-sequence.xml:/home/wso2carbon/wso2am-4.3.0/repository/deployment/server/synapse-configs/default/sequences/custom-header-sequence.xml
     restart: unless-stopped
+    stop_grace_period: 60s
     networks:
       - wso2-network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf https://localhost:9443/api/am/publisher/v4/apis || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 120s
 
   # Phase 5, M3: Async event queue — receives APIM gateway events
   rabbitmq:
@@ -57,6 +78,13 @@ services:
       - "15672:15672"  # Management UI (guest / guest)
     networks:
       - wso2-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "check_port_connectivity"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
 
   # FastAPI backend — owns IS credentials, handles auth flow + API resource endpoints
   backend:
@@ -79,8 +107,14 @@ services:
       - FRONTEND_URL=http://localhost:3000
     networks:
       - wso2-network
+    restart: unless-stopped
     depends_on:
-      - wso2apim
+      postgres:
+        condition: service_healthy
+      wso2is:
+        condition: service_healthy
+      wso2apim:
+        condition: service_healthy
 
   # Next.js frontend — calls backend for auth, APIM gateway directly for APIs
   frontend:
@@ -94,8 +128,10 @@ services:
       - NEXT_PUBLIC_APIM_GATEWAY_URL=https://localhost:8243
     networks:
       - wso2-network
+    restart: unless-stopped
     depends_on:
-      - backend
+      backend:
+        condition: service_started
 
 networks:
   wso2-network:

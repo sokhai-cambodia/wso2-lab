@@ -10,13 +10,21 @@ export default function Home() {
   async function handleLogin() {
     setLoading(true)
     setError('')
+    const controller = new AbortController()
+    const timeoutId = setTimeout(() => controller.abort(), 8000)
     try {
-      const res = await fetch(`${BACKEND}/auth/login-url`)
+      const res = await fetch(`${BACKEND}/auth/login-url`, { signal: controller.signal })
+      clearTimeout(timeoutId)
       if (!res.ok) throw new Error(`Backend error: ${res.status}`)
       const { url } = await res.json()
       window.location.href = url
     } catch (e) {
-      setError(String(e))
+      clearTimeout(timeoutId)
+      setError(
+        e instanceof DOMException && e.name === 'AbortError'
+          ? 'Request timed out — is the backend running? (docker compose ps)'
+          : e instanceof Error ? e.message : String(e)
+      )
       setLoading(false)
     }
   }
