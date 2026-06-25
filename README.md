@@ -53,7 +53,11 @@ wso2-lab/
    ```bash
    docker compose up -d
    ```
-   First boot takes ~1 min for IS and a few minutes for APIM. If you ever start `docker compose up -d` for *all* services before the databases/schema exist (skipping steps 1–3), IS/APIM will log a fatal DB error and hang instead of crash-looping — fix with `docker restart wso2is-local wso2apim-local` once the databases are ready.
+   Services start in dependency order via healthchecks — postgres → IS/APIM (parallel, ~2 min each) → backend → frontend. Watch progress with:
+   ```bash
+   docker compose ps   # STATUS column shows (healthy) when each service is ready
+   ```
+   > **If you skipped steps 1–3** and started everything before the databases exist, IS/APIM will fail their DB connection on first boot. Fix: create and seed the databases (steps 2–3), then `docker compose up -d` again — the backend will start once IS and APIM pass their healthchecks.
 
 5. Access the portals:
    - WSO2 IS Console: https://localhost:9444/console (`admin` / `admin`)

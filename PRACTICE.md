@@ -1,4 +1,4 @@
-# WSO2 Lab — Phase 5 & 6 Practice Guide
+# WSO2 Lab — Phase 5, 6 & 7 Practice Guide
 
 > **Before you start:** All config files, Docker services, and the FastAPI backend have already been written.
 > This document is your hands-on practice runbook — follow each step in order.
@@ -254,8 +254,9 @@ wso2-frontend       running
 | RabbitMQ | http://localhost:15672 | Management UI loads |
 | FastAPI | http://localhost:8000/health | Returns `{"status":"ok"}` |
 
-> APIM takes the longest (~3 min): `docker logs -f wso2apim-local`
-> Ready when you see `[Server startup in XXXX ms]`
+> Services start in dependency order via healthchecks — watch with `docker compose ps`.
+> IS and APIM each have a 2-min `start_period` before health retries begin; total cold-start is ~3–4 min.
+> STATUS shows `(healthy)` when ready. The backend won't start until IS, APIM, and postgres are all healthy.
 
 ---
 
