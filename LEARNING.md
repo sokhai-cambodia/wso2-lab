@@ -16,6 +16,7 @@
 | Phase 6 | Advanced Security & Token Engineering | ✅ Complete |
 | Phase 7 | Production Auth — IS as External Key Manager | ✅ Complete |
 | Phase 8 | Configuration Audit & Hardening | ✅ Complete |
+| Phase 9 | APIM Gateway Migration & TLS Ingress | ✅ Complete |
 
 ---
 
@@ -679,6 +680,96 @@ All use Docker service name `wso2is` (container-to-container, not `localhost`):
 - **`[oauth.grant_type.*]`** — all grant type configs belong in IS when IS is the Key Manager. APIM does not process these when it delegates tokens.
 - **UserInfo vs. SCIM** — `GET /oauth2/userinfo` returns OIDC claims; `GET /scim2/Me` returns SCIM user attributes. APIM Key Manager integration expects the OIDC UserInfo endpoint.
 - **OAuth state parameter** — state must be stored server-side and validated on code exchange to prevent cross-site request forgery; generating a state without validating it provides no protection.
+
+---
+
+## 🟣 Phase 9: APIM Gateway Migration & TLS Ingress
+
+### What You Learned
+- How to put an nginx TLS-terminating reverse proxy in front of the whole stack so the browser only ever sees trusted `.local.test` hostnames
+- Why routing ALL frontend traffic — auth endpoints included — through the APIM gateway breaks any backend code that expects the original `Authorization` header
+- That the bundled WSO2 demo certificate (`wso2carbon.jks`) has a real expiry date and **will** eventually break IS↔APIM trust again — Phase 7's "certificate exchange is required" lesson recurs
+- That a token being valid isn't enough to call a secured API — the token's `client_id` must also belong to a Dev Portal Application with an active subscription to that API
+- That APIM's `X-JWT-Assertion` claim *shape* depends on `apim.jwt.convert_dialect` — flat claim names vs. `http://wso2.org/claims/*` URIs
+
+### Architecture
+
+```
+Browser
+  → https://portal.local.test   (nginx, mkcert TLS) → frontend:3000
+  → https://gateway.local.test  (nginx, mkcert TLS) → wso2apim:8243
+       ├─ /lab/1.0/*  (LabAPI, secured — OAuth2 + subscription check)
+       │     → backend:8000  (receives X-JWT-Assertion, no Authorization header)
+       └─ /auth/*     → same LabAPI context (no separate open API — see below)
+  → https://is.local.test       (nginx, mkcert TLS) → wso2is-local:9444
+```
+
+Backend has **no exposed host port** — it's reachable only from APIM inside `wso2-network`.
+
+### Milestone 1: nginx TLS ingress
+- `mkcert` issues one cert covering `portal.local.test`, `gateway.local.test`, `is.local.test`; root CA copied to `./certs/rootCA.pem`
+- `nginx/nginx.conf` terminates 443 for all three hostnames, proxies to the right Docker service, disables upstream TLS verification for `wso2apim`/`wso2is` (their own certs are self-signed)
+- Frontend's Dockerfile trusts the same root CA via `NODE_EXTRA_CA_CERTS` instead of the blanket `NODE_TLS_REJECT_UNAUTHORIZED=0` it used before
+
+### Milestone 2: `/auth/*` ended up secured, not open
+The original plan (see `docs/tasks/apim-gateway-migration.md`) called for a separate **open, no-auth** `BackendAuth` API at context `/auth` — mirroring Phase 3/7's principle that no token exists pre-login. In practice that API was never created in the Publisher, and `/auth/me` was left going through the already-secured `LabAPI` (`/lab/1.0/auth/me`). Two consequences of that:
+
+1. **APIM strips the `Authorization` header on secured routes.** It consumes the incoming Bearer token as the gateway's own auth credential and does not forward it downstream (`apim.oauth_config.enable_outbound_auth_header` defaults `false`) — it forwards `X-JWT-Assertion` instead. `/auth/me` had to be rewritten from raw-token IS introspection to reading `X-JWT-Assertion` claims, the same pattern already used by `/secure-resource` and `/reports`.
+2. **Subscription checks now apply to `/auth/*` too.** The token's `client_id` — the same one the custom IS Service Provider uses for GitHub-federated SSO — has to exist as a Dev Portal **Application** with an active **Production** subscription to `LabAPI`, or every `/auth/*` call fails `900908 API Subscription validation failed` even with a perfectly valid token.
+
+`/auth/logout`'s IS token revocation still needs the raw access token (`POST /oauth2/revoke`), which secured routes can't provide — it's left as a client-side session clear; the IS token just expires naturally.
+
+### Milestone 3: Claim dialect for `X-JWT-Assertion`
+`config/apim/deployment.toml` → `[apim.jwt]` → `convert_dialect = true` makes APIM emit flat claim names (`name`, `email`) in the injected JWT instead of `http://wso2.org/claims/username` / `.../emailaddress` URIs. Backend code must match whichever mode is set — verify with a one-off `print(payload)` on `X-JWT-Assertion` rather than assuming the URI form.
+
+For **federated** users, prefer the `id_token` claims captured once at `/auth/exchange` (`main.py`) over re-deriving display data from `X-JWT-Assertion` on every request — the exchange-time `id_token` reflects what the federated IdP actually sent, while APIM's claim injection depends on IS's local user store state.
+
+### Runbook: recovering from an expired IS↔APIM trust chain
+Symptom: `javax.net.ssl.SSLHandshakeException: PKIX path building failed` in APIM's log when it calls IS's JWKS endpoint, surfacing to clients as generic `900900 Unclassified Authentication Failure`.
+
+```bash
+# 1. regenerate IS's self-signed cert (delete existing alias first — keytool won't overwrite)
+docker exec wso2is-local keytool -delete -alias wso2carbon \
+  -keystore /home/wso2carbon/wso2is-7.0.0/repository/resources/security/wso2carbon.jks -storepass wso2carbon
+docker exec wso2is-local keytool -genkeypair -alias wso2carbon -keyalg RSA -keysize 2048 \
+  -validity 3650 -keystore /home/wso2carbon/wso2is-7.0.0/repository/resources/security/wso2carbon.jks \
+  -storepass wso2carbon -keypass wso2carbon \
+  -dname "CN=localhost, OU=WSO2, O=WSO2, L=Santa Clara, ST=CA, C=US" -noprompt
+
+# 2. export the new public cert
+docker exec wso2is-local keytool -exportcert -alias wso2carbon \
+  -keystore /home/wso2carbon/wso2is-7.0.0/repository/resources/security/wso2carbon.jks \
+  -storepass wso2carbon -file /tmp/wso2carbon-new.crt
+docker cp wso2is-local:/tmp/wso2carbon-new.crt ./wso2carbon-new.crt
+
+# 3. re-trust it on BOTH sides — APIM's truststore AND IS's own truststore
+#    (IS makes internal, self-referencing HTTPS calls too — skipping this half
+#    throws a *different* error: "signature check failed" instead of "path building failed")
+for host in wso2apim-local wso2is-local; do
+  keystore=$( [ "$host" = "wso2apim-local" ] \
+    && echo /home/wso2carbon/wso2am-4.3.0/repository/resources/security/client-truststore.jks \
+    || echo /home/wso2carbon/wso2is-7.0.0/repository/resources/security/client-truststore.jks )
+  docker exec "$host" keytool -delete -alias wso2carbon -keystore "$keystore" -storepass wso2carbon
+  docker cp ./wso2carbon-new.crt "$host":/tmp/wso2carbon-new.crt
+  docker exec "$host" keytool -importcert -alias wso2carbon -trustcacerts -noprompt \
+    -file /tmp/wso2carbon-new.crt -keystore "$keystore" -storepass wso2carbon
+done
+
+# 4. reload
+docker compose restart wso2is wso2apim
+```
+`./wso2carbon-new.crt` is scratch output — delete it afterward, it's gitignored.
+
+### Known gotcha: Docker Desktop/WSL2 stuck port bindings
+After an unclean container death (e.g. Postgres stopped while IS/APIM still had open connections to it), IS and APIM can get stuck `Exited` with `failed to bind host port ... address already in use` on every subsequent restart attempt — even though `docker ps` shows nothing bound to that port. This is leftover Docker Desktop port-forwarder state, not anything in this repo's config. Fix: `wsl --shutdown` from an elevated PowerShell, reopen Docker Desktop, then `docker compose up -d` again.
+
+### Key Concepts
+- **Single ingress, multiple TLS names** — one nginx container, one mkcert cert, three virtual hosts; the browser never talks to a raw WSO2 port directly
+- **Secured APIs strip `Authorization`** — anything behind APIM's OAuth2 security has to read `X-JWT-Assertion` for caller identity, not the original header
+- **A valid token isn't a subscribed token** — Dev Portal subscriptions gate access per-API, independent of whether the token itself is valid
+- **Claim shape is configurable, not fixed** — `convert_dialect` changes the actual JSON keys in `X-JWT-Assertion`; never assume the URI form without checking
+- **Cert trust is bidirectional** — IS trusting APIM isn't enough, and APIM trusting IS isn't enough either if IS also makes internal calls to itself; both truststores need the current cert
+- **"Exited, port in use" isn't always your config's fault** — rule out host-level Docker/WSL2 state before re-debugging `deployment.toml`
 
 ---
 

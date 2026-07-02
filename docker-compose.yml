@@ -31,6 +31,9 @@ services:
     volumes:
       - ./libs/postgresql-42.7.3.jar:/home/wso2carbon/wso2is-7.0.0/repository/components/lib/postgresql-42.7.3.jar
       - ./config/is/deployment.toml:/home/wso2carbon/wso2is-7.0.0/repository/conf/deployment.toml
+      # Phase 9: replaces the image's stock cert, which shipped already expired
+      - ./config/is/wso2carbon.jks:/home/wso2carbon/wso2is-7.0.0/repository/resources/security/wso2carbon.jks
+      - ./config/is/client-truststore.jks:/home/wso2carbon/wso2is-7.0.0/repository/resources/security/client-truststore.jks
     restart: unless-stopped
     stop_grace_period: 60s
     networks:
@@ -56,6 +59,8 @@ services:
       - ./config/apim/deployment.toml:/home/wso2carbon/wso2am-4.3.0/repository/conf/deployment.toml
       # Phase 5, M2: Custom mediation sequence — injected at container startup
       - ./config/apim/sequences/custom-header-sequence.xml:/home/wso2carbon/wso2am-4.3.0/repository/deployment/server/synapse-configs/default/sequences/custom-header-sequence.xml
+      # Phase 9: trusts the (no-longer-expired) IS cert mounted into wso2is above
+      - ./config/apim/client-truststore.jks:/home/wso2carbon/wso2am-4.3.0/repository/resources/security/client-truststore.jks
     restart: unless-stopped
     stop_grace_period: 60s
     networks:
