@@ -36,7 +36,8 @@ Everything is pre-baked: the repo commits the TLS certs, the WSO2 keystores, *an
 seed dumps of the fully configured databases (IS Service Provider + GitHub
 connection, APIM Key Manager, LabAPI published + subscribed). On first boot with
 an empty volume, Postgres auto-creates and seeds all three databases — **no manual
-IS/APIM console setup needed.**
+IS/APIM console setup needed**, except pasting your own GitHub OAuth credentials
+once (step 3 — the one secret a public repo can't ship).
 
 1. Add hosts entries (the one unavoidable host-machine step):
    ```
@@ -57,16 +58,24 @@ IS/APIM console setup needed.**
    docker compose ps   # wait for wso2is-local and wso2apim-local to show (healthy)
    ```
 
-3. *(Optional, kills browser warnings)* Trust the lab CA: import `certs/rootCA.pem`
+3. Connect your own GitHub OAuth app (one-time, ~3 min — the seed ships with the
+   secret scrubbed, since GitHub auto-revokes OAuth secrets found in public repos):
+   1. GitHub → Settings → Developer settings → OAuth Apps → **New OAuth App**
+      - Homepage URL: `https://localhost:9444`
+      - Authorization callback URL: `https://localhost:9444/commonauth`
+   2. IS Console (`https://localhost:9444/console`, `admin`/`admin`) →
+      **Connections** → **github** → paste your Client ID and Client Secret → save.
+
+4. *(Optional, kills browser warnings)* Trust the lab CA: import `certs/rootCA.pem`
    into your OS/browser trust store. Skipping this just means clicking through a
    self-signed-cert warning — everything still works.
 
-4. Open `https://portal.local.test` → **Login with GitHub** → dashboard → hit the
+5. Open `https://portal.local.test` → **Login with GitHub** → dashboard → hit the
    three API test buttons. Consoles (if you want to poke around): IS at
    `https://localhost:9444/console`, APIM Publisher/DevPortal at
    `https://localhost:9443/publisher` / `/devportal` — all `admin`/`admin`.
 
-5. Tear down:
+6. Tear down:
    ```bash
    docker compose down        # keeps DB volume — instant restart later
    docker compose down -v     # wipes the volume — next `up` re-seeds from scratch
