@@ -97,8 +97,9 @@ services:
     ports:
       - "8000:8000"
     environment:
-      # WSO2 IS — broker for GitHub federated login
-      - WSO2_IS_URL=https://wso2is-local:9444
+      # WSO2 IS — broker for GitHub federated login (compose service name;
+      # same container as wso2is-local, standardized on the service name)
+      - WSO2_IS_URL=https://wso2is:9444
       - WSO2_IS_PUBLIC_URL=https://localhost:9444
       - WSO2_IS_CLIENT_ID=${WSO2_IS_CLIENT_ID}
       - WSO2_IS_CLIENT_SECRET=${WSO2_IS_CLIENT_SECRET}
@@ -120,16 +121,17 @@ services:
       wso2apim:
         condition: service_healthy
 
-  # Next.js frontend — all traffic (auth + APIs) routed through APIM gateway
+  # Next.js frontend — all traffic (auth + APIs) routed through APIM gateway.
+  # NEXT_PUBLIC_* is a BUILD-time value (baked into the JS bundle), so it's a
+  # build arg here — a runtime `environment:` entry would be silently ignored.
   frontend:
-    build: ./frontend
+    build:
+      context: ./frontend
+      args:
+        - NEXT_PUBLIC_BACKEND_URL=https://gateway.local.test/lab/1.0
     container_name: wso2-frontend
     ports:
       - "3000:3000"
-    environment:
-      # Single gateway entry point for all API and auth calls
-      - NEXT_PUBLIC_BACKEND_URL=https://gateway.local.test/lab/1.0
-      - NEXT_PUBLIC_APIM_GATEWAY_URL=https://gateway.local.test
     volumes:
       - ./certs:/certs:ro
     networks:

@@ -84,9 +84,9 @@ export default function Dashboard() {
     }
   }
 
-  async function handleLogout() {
-    const session = sessionStorage.getItem('wso2_token')
-    if (session) await fetch(`${BACKEND}/auth/logout`, { headers: { Authorization: `Bearer ${session}` } }).catch(() => {})
+  function handleLogout() {
+    // Client-side only: the gateway strips Authorization on secured routes, so a
+    // backend revoke call can never see the token. It expires at its natural TTL.
     sessionStorage.clear()
     router.replace('/')
   }

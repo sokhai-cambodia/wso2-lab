@@ -26,7 +26,9 @@ wso2-lab/
 └── certs/               ← mkcert output (gitignored, regenerate per machine — see step 5)
 ```
 
-All frontend traffic (auth **and** business API calls) goes through the APIM gateway — there's no direct browser→backend path. See [LEARNING.md Phase 9](LEARNING.md#-phase-9-apim-gateway-migration--tls-ingress) for why.
+All frontend traffic (auth **and** business API calls) goes through the APIM gateway — there's no direct browser→backend path. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full request lifecycle and [LEARNING.md Phase 9](LEARNING.md#-phase-9-apim-gateway-migration--tls-ingress) for how it got this way.
+
+> Note: logout is client-side only (session cleared in the browser; the IS token expires at its ~1h TTL). Server-side revocation is impossible behind the gateway — see "The one rule" in ARCHITECTURE.md.
 
 ## Quick Start
 
