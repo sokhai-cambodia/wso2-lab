@@ -21,58 +21,102 @@ wso2-lab/
 ├── docker-compose.yml
 ├── libs/                ← JDBC drivers mounted into containers
 ├── config/              ← deployment.toml per service (is/, apim/)
-└── scripts/             ← PostgreSQL schema scripts (shared, identity, consent, apim)
+├── scripts/             ← PostgreSQL schema scripts (shared, identity, consent, apim)
+├── nginx/nginx.conf     ← TLS termination + reverse proxy for *.local.test
+└── certs/               ← mkcert output (gitignored, regenerate per machine — see step 5)
 ```
 
-## Quick Start
+All frontend traffic (auth **and** business API calls) goes through the APIM gateway — there's no direct browser→backend path. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full request lifecycle and [LEARNING.md Phase 9](LEARNING.md#-phase-9-apim-gateway-migration--tls-ingress) for how it got this way.
 
-> `POSTGRES_DB` only creates the `wso2db` placeholder database — it does **not** create `shared_db`, `identity_db`, or `apim_db`. Those must be created and seeded *before* WSO2 IS/APIM first boot, otherwise they fail their initial DB connection and get stuck (WSO2 doesn't retry — see step 4 if this happens to you).
+> Note: logout is client-side only (session cleared in the browser; the IS token expires at its ~1h TTL). Server-side revocation is impossible behind the gateway — see "The one rule" in ARCHITECTURE.md.
 
-1. Start Postgres only (first run only):
-   ```bash
-   docker compose up -d postgres
+## Quick Start (clone → run → test)
+
+Everything is pre-baked: the repo commits the TLS certs, the WSO2 keystores, *and*
+seed dumps of the fully configured databases (IS Service Provider + GitHub
+connection, APIM Key Manager, LabAPI published + subscribed). On first boot with
+an empty volume, Postgres auto-creates and seeds all three databases — **no manual
+IS/APIM console setup needed**, except pasting your own GitHub OAuth credentials
+once (step 3 — the one secret a public repo can't ship).
+
+1. Add hosts entries (the one unavoidable host-machine step):
    ```
-
-2. Create the 3 databases:
-   ```bash
-   docker exec wso2-postgres psql -U wso2 -d wso2db -c "CREATE DATABASE shared_db;"
-   docker exec wso2-postgres psql -U wso2 -d wso2db -c "CREATE DATABASE identity_db;"
-   docker exec wso2-postgres psql -U wso2 -d wso2db -c "CREATE DATABASE apim_db;"
+   127.0.0.1  portal.local.test
+   127.0.0.1  gateway.local.test
+   127.0.0.1  is.local.test
    ```
+   Linux/WSL: append to `/etc/hosts` with sudo. Windows: add to
+   `C:\Windows\System32\drivers\etc\hosts` as Administrator.
 
-3. Load the schema (see [LEARNING.md](LEARNING.md#phase-4-state-persistence--production-database-separation) for which script maps to which database):
-   ```bash
-   docker exec -i wso2-postgres psql -U wso2 -d shared_db < scripts/shared.sql
-   docker exec -i wso2-postgres psql -U wso2 -d identity_db < scripts/identity_correct.sql
-   docker exec -i wso2-postgres psql -U wso2 -d identity_db < scripts/consent.sql
-   docker exec -i wso2-postgres psql -U wso2 -d apim_db < scripts/apim.sql
-   ```
-   On PowerShell, use `Get-Content` instead of `<` redirection.
-
-   ```bash
-   Get-Content scripts/shared.sql          | docker exec -e PGPASSWORD=wso2123 -i wso2-postgres psql -U wso2 -d shared_db
-   Get-Content scripts/identity_correct.sql | docker exec -e PGPASSWORD=wso2123 -i wso2-postgres psql -U wso2 -d identity_db
-   Get-Content scripts/consent.sql         | docker exec -e PGPASSWORD=wso2123 -i wso2-postgres psql -U wso2 -d identity_db
-   Get-Content scripts/apim.sql            | docker exec -e PGPASSWORD=wso2123 -i wso2-postgres psql -U wso2 -d apim_db
-   ```
-
-4. Start WSO2 IS and APIM:
+2. Start everything:
    ```bash
    docker compose up -d
    ```
-   Services start in dependency order via healthchecks — postgres → IS/APIM (parallel, ~2 min each) → backend → frontend. Watch progress with:
+   First boot takes ~3–4 min: postgres seeds the databases, then IS/APIM start in
+   parallel (~2 min each), then backend → frontend → nginx. Watch with:
    ```bash
-   docker compose ps   # STATUS column shows (healthy) when each service is ready
+   docker compose ps   # wait for wso2is-local and wso2apim-local to show (healthy)
    ```
-   > **If you skipped steps 1–3** and started everything before the databases exist, IS/APIM will fail their DB connection on first boot. Fix: create and seed the databases (steps 2–3), then `docker compose up -d` again — the backend will start once IS and APIM pass their healthchecks.
 
-5. Access the portals:
-   - WSO2 IS Console: https://localhost:9444/console (`admin` / `admin`)
-   - WSO2 APIM Publisher: https://localhost:9443/publisher
-   - WSO2 APIM Dev Portal: https://localhost:9443/devportal
+3. Connect your own GitHub OAuth app (one-time, ~3 min — the seed ships with the
+   secret scrubbed, since GitHub auto-revokes OAuth secrets found in public repos):
+   1. GitHub → Settings → Developer settings → OAuth Apps → **New OAuth App**
+      - Homepage URL: `https://localhost:9444`
+      - Authorization callback URL: `https://localhost:9444/commonauth`
+   2. IS Console (`https://localhost:9444/console`, `admin`/`admin`) →
+      **Connections** → **github** → paste your Client ID and Client Secret → save.
+
+4. *(Optional, kills browser warnings)* Trust the lab CA: import `certs/rootCA.pem`
+   into your OS/browser trust store. Skipping this just means clicking through a
+   self-signed-cert warning — everything still works.
+
+5. Open `https://portal.local.test` → **Login with GitHub** → dashboard → hit the
+   three API test buttons. Consoles (if you want to poke around): IS at
+   `https://localhost:9444/console`, APIM Publisher/DevPortal at
+   `https://localhost:9443/publisher` / `/devportal` — all `admin`/`admin`.
 
 6. Tear down:
    ```bash
-   docker compose down
+   docker compose down        # keeps DB volume — instant restart later
+   docker compose down -v     # wipes the volume — next `up` re-seeds from scratch
    ```
-   Add `-v` to also remove the `postgres_data` volume (this wipes the databases — you'd redo steps 1–3 next time).
+
+> **How the zero-config works:** all IS/APIM configuration lives in Postgres
+> (Phase 4), secrets in those DBs are encrypted against the committed keystores
+> (Phase 9), and `scripts/init/00-init.sh` seeds the databases from
+> `scripts/init/seed/*.sql` on first boot. Everything committed here is
+> lab-only by design — do not reuse this pattern with real credentials.
+
+<details>
+<summary><b>Rebuilding from scratch (no seed dumps — vanilla WSO2)</b></summary>
+
+If the seed dumps are absent, `00-init.sh` falls back to loading the vanilla WSO2
+schemas (`scripts/shared.sql`, `identity_correct.sql`, `consent.sql`, `apim.sql`).
+The stack boots clean but unconfigured — you then need the manual console setup:
+IS Service Provider + GitHub connection with JIT ([Phase 3](LEARNING.md#-phase-3-identity-brokerage--federation)),
+IS as Key Manager ([Phase 7](LEARNING.md#-phase-7-production-auth--is-as-external-key-manager)),
+LabAPI published and a Dev Portal Application subscribed to it
+([Phase 9](LEARNING.md#-phase-9-apim-gateway-migration--tls-ingress) — without the
+subscription every gateway call returns `900908`). To regenerate certs per-machine
+instead of using the committed ones: `mkcert -install && mkcert -cert-file
+certs/local.pem -key-file certs/local-key.pem portal.local.test
+gateway.local.test is.local.test && cp "$(mkcert -CAROOT)/rootCA.pem" certs/`.
+
+To refresh the seed dumps after changing WSO2 config (run against a working stack):
+```bash
+for db in shared_db identity_db apim_db; do
+  docker exec wso2-postgres pg_dump -U wso2 -d $db --no-owner --clean --if-exists -f /tmp/$db.sql
+  docker cp wso2-postgres:/tmp/$db.sql scripts/init/seed/$db.sql
+done
+```
+</details>
+
+## Troubleshooting
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| `900900 Unclassified Authentication Failure`, or APIM log shows `PKIX path building failed` | IS↔APIM certificate trust expired/broken | Regenerate and re-exchange certs — runbook in [LEARNING.md Phase 9](LEARNING.md#runbook-recovering-from-an-expired-isapim-trust-chain) |
+| `900908 API Subscription validation failed` | Token's client isn't subscribed to the API being called | Dev Portal → Applications → your app → Subscriptions → subscribe to `LabAPI` (step 7 above) |
+| IS/APIM stuck `Exited` with `address already in use` on restart, even though `docker ps` shows nothing on that port | Docker Desktop/WSL2 leftover port-forwarder state after an unclean shutdown | `wsl --shutdown` (elevated PowerShell) → reopen Docker Desktop → `docker compose up -d` |
+| `invalid_client` / `application.not.found` at `/oauth2/authorize` | The OAuth app behind that client ID doesn't exist in IS (e.g. `postgres_data` was reset) | Recreate the Service Provider in IS Console, update `WSO2_IS_CLIENT_ID`/`SECRET` in `.env` |
+| Logged in, but `/auth/me` shows the right `sub` with no name/email | Federated (GitHub) user claims come from `X-JWT-Assertion`, whose shape depends on `apim.jwt.convert_dialect` | See [Phase 9, Milestone 3](LEARNING.md#milestone-3-claim-dialect-for-x-jwt-assertion) |

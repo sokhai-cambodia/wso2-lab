@@ -27,8 +27,9 @@ export default function Callback() {
         if (!res.ok) return res.json().then(d => Promise.reject(d.detail ?? 'Exchange failed'))
         return res.json()
       })
-      .then(({ access_token }) => {
+      .then(({ access_token, user }) => {
         sessionStorage.setItem('wso2_token', access_token)
+        sessionStorage.setItem('wso2_user', JSON.stringify(user))
         router.replace('/dashboard')
       })
       .catch(err => setError(String(err)))

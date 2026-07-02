@@ -1,25 +1,33 @@
 """
-WSO2 Lab Backend — two responsibilities:
-  1. API resource endpoints  — called by APIM gateway (receive X-JWT-Assertion header)
-  2. Auth endpoints          — called by the Next.js frontend
+WSO2 Lab Backend — every endpoint here sits behind the APIM gateway
+(https://gateway.local.test, LabAPI context /lab/1.0). Nothing calls this
+service directly; it has no exposed host port.
 
 Login flow (WSO2 IS as OIDC broker, GitHub as federated IdP):
   Browser → GET /auth/login-url
           → IS authorize URL with fidp=<GitHub connection name>
           → IS skips its login screen, redirects straight to GitHub
-          → GitHub auth → IS /commonauth → http://localhost:3000/callback?code=xxx
-          → POST /auth/exchange {code} → IS /oauth2/token → returns IS access_token to frontend
-          → frontend sends IS access_token directly to APIM gateway (IS is APIM's Key Manager)
-          → APIM validates token with IS, injects X-JWT-Assertion, forwards to backend
+          → GitHub auth → IS /commonauth → https://portal.local.test/callback?code=xxx
+          → POST /auth/exchange {code} → IS /oauth2/token → access_token + id_token
+          → frontend keeps the id_token-derived user profile and sends the
+            access_token to the APIM gateway on every call (IS is APIM's Key Manager)
 
-APIM is configured to use IS as its Key Manager — IS tokens are valid at the APIM gateway.
-All WSO2 credentials live here. Frontend needs NEXT_PUBLIC_BACKEND_URL + NEXT_PUBLIC_APIM_GATEWAY_URL.
+THE ONE RULE for this file: APIM consumes the Authorization header on secured
+routes and does NOT forward it — the only caller identity that reaches us is
+the X-JWT-Assertion header (a JWT APIM signs after validating the real token).
+Any handler that needs the raw access token cannot exist behind this gateway.
+
+Claim shape inside X-JWT-Assertion follows apim.jwt.convert_dialect in
+config/apim/deployment.toml — currently `true`, so keys are flat (name, email),
+not http://wso2.org/claims/* URIs.
 """
 
 import os
 import json
 import ssl
 import time
+import base64
+import hashlib
 import secrets
 import urllib.parse
 import urllib.request
@@ -35,39 +43,47 @@ from pydantic import BaseModel
 # ---------------------------------------------------------------------------
 # Config
 # ---------------------------------------------------------------------------
-IS_URL        = os.getenv("WSO2_IS_URL",        "https://wso2is-local:9444")  # Docker-internal
-IS_PUBLIC_URL = os.getenv("WSO2_IS_PUBLIC_URL", "https://localhost:9444")     # browser-accessible
+IS_URL        = os.getenv("WSO2_IS_URL",        "https://wso2is:9444")     # Docker-internal
+IS_PUBLIC_URL = os.getenv("WSO2_IS_PUBLIC_URL", "https://localhost:9444")  # browser-accessible
 IS_CLIENT_ID  = os.getenv("WSO2_IS_CLIENT_ID",  "")
 IS_CLIENT_SECRET = os.getenv("WSO2_IS_CLIENT_SECRET", "")
 GITHUB_IDP_NAME  = os.getenv("GITHUB_IDP_NAME", "github")  # must match IS connection name exactly
 
 APIM_URL = os.getenv("WSO2_APIM_URL", "https://wso2apim:9443")  # for JWKS only
 
-AUTH_CALLBACK_URL = os.getenv("AUTH_CALLBACK_URL", "http://localhost:3000/callback")
-FRONTEND_URL      = os.getenv("FRONTEND_URL",      "http://localhost:3000")
+AUTH_CALLBACK_URL = os.getenv("AUTH_CALLBACK_URL", "https://portal.local.test/callback")
+FRONTEND_URL      = os.getenv("FRONTEND_URL",      "https://portal.local.test")
 APIM_JWKS_URL     = f"{APIM_URL}/oauth2/jwks"
 
 # ---------------------------------------------------------------------------
 # In-memory stores
 # ---------------------------------------------------------------------------
 _public_keys: dict = {}          # kid → RSA public key
-_pending_states: dict[str, float] = {}  # state → expiry (monotonic time)
+_pending_states: dict[str, tuple[float, str]] = {}  # state → (expiry, code_verifier)
 _STATE_TTL = 300  # seconds; abandoned flows (tab closed mid-redirect) are cleaned up on next use
 
 
-def _add_state(state: str) -> None:
-    _pending_states[state] = time.monotonic() + _STATE_TTL
+def _pkce_pair() -> tuple[str, str]:
+    """Generate a PKCE code_verifier and its S256 code_challenge."""
+    verifier = secrets.token_urlsafe(43)
+    digest = hashlib.sha256(verifier.encode()).digest()
+    challenge = base64.urlsafe_b64encode(digest).rstrip(b"=").decode()
+    return verifier, challenge
 
 
-def _consume_state(state: str) -> bool:
-    """Return True and remove the state if present and not expired. Cleans up stale entries."""
-    expiry = _pending_states.pop(state, None)
-    if expiry is None or time.monotonic() > expiry:
-        return False
+def _add_state(state: str, verifier: str) -> None:
+    _pending_states[state] = (time.monotonic() + _STATE_TTL, verifier)
+
+
+def _consume_state(state: str) -> str | None:
+    """Return code_verifier and remove the state if present and not expired, else None."""
+    entry = _pending_states.pop(state, None)
+    if entry is None or time.monotonic() > entry[0]:
+        return None
     now = time.monotonic()
-    for k in [k for k, v in _pending_states.items() if v < now]:
+    for k in [k for k, v in _pending_states.items() if v[0] < now]:
         del _pending_states[k]
-    return True
+    return entry[1]
 
 # ---------------------------------------------------------------------------
 # App + CORS
@@ -108,29 +124,6 @@ def _load_jwks() -> None:
         kid = key_data.get("kid", "default")
         _public_keys[kid] = RSAAlgorithm.from_jwk(json.dumps(key_data))
     print(f"Loaded {len(_public_keys)} APIM signing key(s).")
-
-
-# ---------------------------------------------------------------------------
-# Auth helpers
-# ---------------------------------------------------------------------------
-def _get_bearer(authorization: str | None) -> str:
-    if not authorization or not authorization.startswith("Bearer "):
-        raise HTTPException(status_code=401, detail="Missing or invalid Authorization header.")
-    return authorization.removeprefix("Bearer ")
-
-
-async def _introspect(token: str) -> dict:
-    """Validate IS access token and return its claims. Raises 401 if inactive."""
-    async with httpx.AsyncClient(verify=False, timeout=httpx.Timeout(10.0)) as client:
-        res = await client.post(
-            f"{IS_URL}/oauth2/introspect",
-            data={"token": token},
-            auth=(IS_CLIENT_ID, IS_CLIENT_SECRET),
-        )
-    data = res.json()
-    if not data.get("active"):
-        raise HTTPException(status_code=401, detail="Token inactive or expired. Please log in again.")
-    return data
 
 
 # ===========================================================================
@@ -212,12 +205,12 @@ def reports(x_jwt_assertion: str = Header(default=None)):
 
 
 # ===========================================================================
-# Section 2 — Auth flow (called by frontend)
+# Section 2 — Auth flow (called by frontend, via the gateway)
 #
 # GET  /auth/login-url  → returns IS authorize URL (fidp skips IS login screen)
-# POST /auth/exchange   → exchanges IS code for tokens, returns IS access_token to frontend
-# GET  /auth/me         → introspects IS token, returns user claims
-# GET  /auth/logout     → revokes IS token
+# POST /auth/exchange   → exchanges IS code for tokens; returns access_token +
+#                         the id_token-derived user profile (frontend stores both)
+# GET  /auth/me         → session liveness check; echoes X-JWT-Assertion claims
 # ===========================================================================
 
 @app.get("/auth/login-url")
@@ -225,14 +218,17 @@ def auth_login_url():
     if not IS_CLIENT_ID:
         raise HTTPException(status_code=503, detail="WSO2_IS_CLIENT_ID not configured.")
     state = secrets.token_urlsafe(16)
-    _add_state(state)
+    verifier, challenge = _pkce_pair()
+    _add_state(state, verifier)
     params = urllib.parse.urlencode({
-        "response_type": "code",
-        "client_id":     IS_CLIENT_ID,
-        "redirect_uri":  AUTH_CALLBACK_URL,
-        "scope":         "openid profile email",
-        "state":         state,
-        "fidp":          GITHUB_IDP_NAME,
+        "response_type":         "code",
+        "client_id":             IS_CLIENT_ID,
+        "redirect_uri":          AUTH_CALLBACK_URL,
+        "scope":                 "openid profile email",
+        "state":                 state,
+        "fidp":                  GITHUB_IDP_NAME,
+        "code_challenge":        challenge,
+        "code_challenge_method": "S256",
     })
     return {"url": f"{IS_PUBLIC_URL}/oauth2/authorize?{params}"}
 
@@ -244,16 +240,18 @@ class ExchangeRequest(BaseModel):
 
 @app.post("/auth/exchange")
 async def auth_exchange(body: ExchangeRequest):
-    if not _consume_state(body.state):
+    verifier = _consume_state(body.state)
+    if verifier is None:
         raise HTTPException(status_code=400, detail="Invalid or expired state parameter.")
 
     async with httpx.AsyncClient(verify=False, timeout=httpx.Timeout(10.0)) as client:
         token_res = await client.post(
             f"{IS_URL}/oauth2/token",
             data={
-                "grant_type":   "authorization_code",
-                "code":         body.code,
-                "redirect_uri": AUTH_CALLBACK_URL,
+                "grant_type":    "authorization_code",
+                "code":          body.code,
+                "redirect_uri":  AUTH_CALLBACK_URL,
+                "code_verifier": verifier,
             },
             auth=(IS_CLIENT_ID, IS_CLIENT_SECRET),
         )
@@ -277,25 +275,26 @@ async def auth_exchange(body: ExchangeRequest):
 
 
 @app.get("/auth/me")
-async def auth_me(authorization: str = Header(default=None)):
-    token = _get_bearer(authorization)
-    claims = await _introspect(token)
+def auth_me(x_jwt_assertion: str = Header(default=None)):
+    # Routed through the secured LabAPI — APIM already validated the caller's token
+    # and injects the claims here. No raw Authorization header reaches the backend
+    # for secured resources, so we read claims instead of introspecting.
+    if not x_jwt_assertion:
+        raise HTTPException(status_code=401, detail="Missing X-JWT-Assertion.")
+    try:
+        payload = jwt.decode(x_jwt_assertion, options={"verify_signature": False})
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Invalid JWT: {exc}")
     return {
-        "sub":   claims.get("sub"),
-        "name":  claims.get("username") or claims.get("sub"),
-        "email": claims.get("email"),
+        "sub":   payload.get("sub"),
+        "name":  payload.get("name") or payload.get("sub"),
+        "email": payload.get("email"),
     }
 
 
-@app.get("/auth/logout")
-async def auth_logout(authorization: str = Header(default=None)):
-    token = _get_bearer(authorization)
-    async with httpx.AsyncClient(verify=False, timeout=httpx.Timeout(10.0)) as client:
-        await client.post(
-            f"{IS_URL}/oauth2/revoke",
-            data={"token": token},
-            auth=(IS_CLIENT_ID, IS_CLIENT_SECRET),
-        )
-    return {"ok": True}
+# No /auth/logout endpoint: revoking at IS needs the raw access token, but APIM
+# strips the Authorization header on this secured route, so a backend revoke can
+# never receive it. Logout is client-side (frontend clears sessionStorage); the
+# IS token simply expires at its natural TTL (~1h).
 
 

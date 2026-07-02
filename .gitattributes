@@ -1,0 +1,6 @@
+# Shell scripts and SQL run inside Linux containers — must stay LF even on
+# Windows checkouts, or docker-entrypoint-initdb.d silently breaks on CRLF.
+*.sh  text eol=lf
+*.sql text eol=lf
+*.toml text eol=lf
+*.conf text eol=lf
