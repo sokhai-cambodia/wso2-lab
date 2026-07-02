@@ -18,7 +18,11 @@ services:
     networks:
       - wso2-network
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U wso2 -d wso2db"]
+      # -h 127.0.0.1 forces a TCP check: during the initdb.d seeding phase
+      # postgres only listens on the unix socket, and a socket-based pg_isready
+      # would report healthy while seeding is still running — letting IS/APIM
+      # boot early, fail their one-shot DB connection, and never retry.
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U wso2 -d wso2db"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -41,6 +45,9 @@ services:
       - ./config/is/client-truststore.jks:/home/wso2carbon/wso2is-7.0.0/repository/resources/security/client-truststore.jks
     restart: unless-stopped
     stop_grace_period: 60s
+    depends_on:
+      postgres:
+        condition: service_healthy
     networks:
       - wso2-network
     healthcheck:
@@ -68,6 +75,9 @@ services:
       - ./config/apim/client-truststore.jks:/home/wso2carbon/wso2am-4.3.0/repository/resources/security/client-truststore.jks
     restart: unless-stopped
     stop_grace_period: 60s
+    depends_on:
+      postgres:
+        condition: service_healthy
     networks:
       - wso2-network
     healthcheck:
