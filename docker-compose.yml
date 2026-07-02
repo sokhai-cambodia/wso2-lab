@@ -10,6 +10,11 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:-wso2db}
     volumes:
       - postgres_data:/var/lib/postgresql/data
+      # First boot on an EMPTY volume: auto-creates + seeds the 3 WSO2 databases
+      # from a dump of the fully configured lab (SP, Key Manager, LabAPI,
+      # subscriptions). Existing volumes are untouched. See scripts/init/00-init.sh.
+      - ./scripts/init:/docker-entrypoint-initdb.d:ro
+      - ./scripts:/wso2-schemas:ro
     networks:
       - wso2-network
     healthcheck:
@@ -101,8 +106,10 @@ services:
       # same container as wso2is-local, standardized on the service name)
       - WSO2_IS_URL=https://wso2is:9444
       - WSO2_IS_PUBLIC_URL=https://localhost:9444
-      - WSO2_IS_CLIENT_ID=${WSO2_IS_CLIENT_ID}
-      - WSO2_IS_CLIENT_SECRET=${WSO2_IS_CLIENT_SECRET}
+      # Defaults match the Service Provider baked into the seed dumps, so a
+      # fresh clone needs no .env. Lab-only credentials — committed on purpose.
+      - WSO2_IS_CLIENT_ID=${WSO2_IS_CLIENT_ID:-o31d7R_IGzelfuKfxnJ436MGY74a}
+      - WSO2_IS_CLIENT_SECRET=${WSO2_IS_CLIENT_SECRET:-Owtf8cTostthuwBj2D5bz64NqnDsJtBzYU3fHAEscloa}
       # Name of the GitHub connection in IS (Connections tab — must match exactly)
       - GITHUB_IDP_NAME=${GITHUB_IDP_NAME:-GitHub}
       # WSO2 APIM — URL used only to load JWKS for X-JWT-Assertion verification

@@ -5,7 +5,9 @@ Thumbs.db
 .vscode/
 .idea/
 .env
-certs/
+# certs/ is committed on purpose (lab-only mkcert output) so a fresh clone can
+# `docker compose up` with zero setup; cloners trust certs/rootCA.pem or click
+# through the browser warning.
 *.crt
 .claude/settings.local.json
 frontend/.env.local

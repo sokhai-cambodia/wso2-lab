@@ -30,75 +30,77 @@ All frontend traffic (auth **and** business API calls) goes through the APIM gat
 
 > Note: logout is client-side only (session cleared in the browser; the IS token expires at its ~1h TTL). Server-side revocation is impossible behind the gateway — see "The one rule" in ARCHITECTURE.md.
 
-## Quick Start
+## Quick Start (clone → run → test)
 
-> `POSTGRES_DB` only creates the `wso2db` placeholder database — it does **not** create `shared_db`, `identity_db`, or `apim_db`. Those must be created and seeded *before* WSO2 IS/APIM first boot, otherwise they fail their initial DB connection and get stuck (WSO2 doesn't retry — see step 6 if this happens to you).
+Everything is pre-baked: the repo commits the TLS certs, the WSO2 keystores, *and*
+seed dumps of the fully configured databases (IS Service Provider + GitHub
+connection, APIM Key Manager, LabAPI published + subscribed). On first boot with
+an empty volume, Postgres auto-creates and seeds all three databases — **no manual
+IS/APIM console setup needed.**
 
-1. Start Postgres only (first run only):
-   ```bash
-   docker compose up -d postgres
+1. Add hosts entries (the one unavoidable host-machine step):
    ```
-
-2. Create the 3 databases:
-   ```bash
-   docker exec wso2-postgres psql -U wso2 -d wso2db -c "CREATE DATABASE shared_db;"
-   docker exec wso2-postgres psql -U wso2 -d wso2db -c "CREATE DATABASE identity_db;"
-   docker exec wso2-postgres psql -U wso2 -d wso2db -c "CREATE DATABASE apim_db;"
+   127.0.0.1  portal.local.test
+   127.0.0.1  gateway.local.test
+   127.0.0.1  is.local.test
    ```
+   Linux/WSL: append to `/etc/hosts` with sudo. Windows: add to
+   `C:\Windows\System32\drivers\etc\hosts` as Administrator.
 
-3. Load the schema (see [LEARNING.md](LEARNING.md#phase-4-state-persistence--production-database-separation) for which script maps to which database):
-   ```bash
-   docker exec -i wso2-postgres psql -U wso2 -d shared_db < scripts/shared.sql
-   docker exec -i wso2-postgres psql -U wso2 -d identity_db < scripts/identity_correct.sql
-   docker exec -i wso2-postgres psql -U wso2 -d identity_db < scripts/consent.sql
-   docker exec -i wso2-postgres psql -U wso2 -d apim_db < scripts/apim.sql
-   ```
-   On PowerShell, use `Get-Content` instead of `<` redirection.
-
-   ```bash
-   Get-Content scripts/shared.sql          | docker exec -e PGPASSWORD=wso2123 -i wso2-postgres psql -U wso2 -d shared_db
-   Get-Content scripts/identity_correct.sql | docker exec -e PGPASSWORD=wso2123 -i wso2-postgres psql -U wso2 -d identity_db
-   Get-Content scripts/consent.sql         | docker exec -e PGPASSWORD=wso2123 -i wso2-postgres psql -U wso2 -d identity_db
-   Get-Content scripts/apim.sql            | docker exec -e PGPASSWORD=wso2123 -i wso2-postgres psql -U wso2 -d apim_db
-   ```
-
-4. Generate local trusted TLS certs (one-time per machine — `certs/` is gitignored):
-   ```bash
-   mkcert -install
-   mkdir -p certs
-   mkcert -cert-file certs/local.pem -key-file certs/local-key.pem \
-     portal.local.test gateway.local.test is.local.test
-   cp "$(mkcert -CAROOT)/rootCA.pem" certs/rootCA.pem
-   ```
-
-5. Add `/etc/hosts` entries so the browser resolves the `.local.test` names to the nginx container:
-   ```bash
-   echo -e "127.0.0.1  portal.local.test\n127.0.0.1  gateway.local.test\n127.0.0.1  is.local.test" | sudo tee -a /etc/hosts
-   ```
-   On Windows, add the same three lines to `C:\Windows\System32\drivers\etc\hosts` as Administrator.
-
-6. Start the full stack:
+2. Start everything:
    ```bash
    docker compose up -d
    ```
-   Services start in dependency order via healthchecks — postgres → IS/APIM (parallel, ~2 min each) → backend → frontend → nginx. Watch progress with:
+   First boot takes ~3–4 min: postgres seeds the databases, then IS/APIM start in
+   parallel (~2 min each), then backend → frontend → nginx. Watch with:
    ```bash
-   docker compose ps   # STATUS column shows (healthy) when each service is ready
+   docker compose ps   # wait for wso2is-local and wso2apim-local to show (healthy)
    ```
-   > **If you skipped steps 1–3** and started everything before the databases exist, IS/APIM will fail their DB connection on first boot. Fix: create and seed the databases (steps 2–3), then `docker compose up -d` again — the backend will start once IS and APIM pass their healthchecks.
 
-7. One-time WSO2 console setup (skip if you're reusing an existing `postgres_data` volume where this is already configured):
-   - **IS Console** (`https://is.local.test/console`, `admin`/`admin`) — confirm the GitHub connection exists with JIT Provisioning enabled ([Phase 3](LEARNING.md#-phase-3-identity-brokerage--federation)), and that its OAuth2/OIDC app has `https://portal.local.test/callback` as an authorized redirect URL.
-   - **APIM Publisher** (`https://gateway.local.test/publisher`) — confirm `LabAPI` is published, secured (OAuth2), and deployed to the `Default` gateway environment.
-   - **APIM Dev Portal** (`https://gateway.local.test/devportal`) — create (or map) an Application using the **same client ID/secret** as the IS Service Provider above, generate **Production** keys, then **Subscribe** that Application to `LabAPI`. Without this, every gateway call returns `900908 API Subscription validation failed` even with a valid token — see [Phase 9](LEARNING.md#-phase-9-apim-gateway-migration--tls-ingress).
+3. *(Optional, kills browser warnings)* Trust the lab CA: import `certs/rootCA.pem`
+   into your OS/browser trust store. Skipping this just means clicking through a
+   self-signed-cert warning — everything still works.
 
-8. Access the app: `https://portal.local.test`. Direct console access (bypassing nginx) is also available at `https://localhost:9444/console`, `https://localhost:9443/publisher`, `https://localhost:9443/devportal`.
+4. Open `https://portal.local.test` → **Login with GitHub** → dashboard → hit the
+   three API test buttons. Consoles (if you want to poke around): IS at
+   `https://localhost:9444/console`, APIM Publisher/DevPortal at
+   `https://localhost:9443/publisher` / `/devportal` — all `admin`/`admin`.
 
-9. Tear down:
+5. Tear down:
    ```bash
-   docker compose down
+   docker compose down        # keeps DB volume — instant restart later
+   docker compose down -v     # wipes the volume — next `up` re-seeds from scratch
    ```
-   Add `-v` to also remove the `postgres_data` volume (this wipes the databases — you'd redo steps 1–3 and 7 next time).
+
+> **How the zero-config works:** all IS/APIM configuration lives in Postgres
+> (Phase 4), secrets in those DBs are encrypted against the committed keystores
+> (Phase 9), and `scripts/init/00-init.sh` seeds the databases from
+> `scripts/init/seed/*.sql` on first boot. Everything committed here is
+> lab-only by design — do not reuse this pattern with real credentials.
+
+<details>
+<summary><b>Rebuilding from scratch (no seed dumps — vanilla WSO2)</b></summary>
+
+If the seed dumps are absent, `00-init.sh` falls back to loading the vanilla WSO2
+schemas (`scripts/shared.sql`, `identity_correct.sql`, `consent.sql`, `apim.sql`).
+The stack boots clean but unconfigured — you then need the manual console setup:
+IS Service Provider + GitHub connection with JIT ([Phase 3](LEARNING.md#-phase-3-identity-brokerage--federation)),
+IS as Key Manager ([Phase 7](LEARNING.md#-phase-7-production-auth--is-as-external-key-manager)),
+LabAPI published and a Dev Portal Application subscribed to it
+([Phase 9](LEARNING.md#-phase-9-apim-gateway-migration--tls-ingress) — without the
+subscription every gateway call returns `900908`). To regenerate certs per-machine
+instead of using the committed ones: `mkcert -install && mkcert -cert-file
+certs/local.pem -key-file certs/local-key.pem portal.local.test
+gateway.local.test is.local.test && cp "$(mkcert -CAROOT)/rootCA.pem" certs/`.
+
+To refresh the seed dumps after changing WSO2 config (run against a working stack):
+```bash
+for db in shared_db identity_db apim_db; do
+  docker exec wso2-postgres pg_dump -U wso2 -d $db --no-owner --clean --if-exists -f /tmp/$db.sql
+  docker cp wso2-postgres:/tmp/$db.sql scripts/init/seed/$db.sql
+done
+```
+</details>
 
 ## Troubleshooting
 
