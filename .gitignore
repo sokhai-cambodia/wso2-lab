@@ -5,8 +5,12 @@ Thumbs.db
 .vscode/
 .idea/
 .env
-certs/*.key
+certs/
+*.crt
 .claude/settings.local.json
 frontend/.env.local
 frontend/.next/
 frontend/node_modules/
+
+# stray local debug dumps
+/test*.json

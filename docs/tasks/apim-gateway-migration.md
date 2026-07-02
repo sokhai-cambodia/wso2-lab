@@ -32,7 +32,7 @@ mkcert -cert-file certs/local.pem -key-file certs/local-key.pem \
 cp "$(mkcert -CAROOT)/rootCA.pem" certs/rootCA.pem
 ```
 **Output:** `certs/local.pem`, `certs/local-key.pem`, `certs/rootCA.pem`  
-**Status:** ⬜ pending
+**Status:** ⬜ pending (user must run on host)
 
 ---
 
@@ -49,7 +49,7 @@ to the correct Docker service. Disable upstream SSL verification for
 | `gateway.local.test` | `https://wso2apim:8243` |
 | `is.local.test` | `https://wso2is:9444` |
 
-**Status:** ⬜ pending
+**Status:** ✅ done — `nginx/nginx.conf` created
 
 ---
 
@@ -58,7 +58,7 @@ to the correct Docker service. Disable upstream SSL verification for
 **What:** Add `nginx` service block — image `nginx:alpine`, bind port
 `443:443`, mount `./nginx/nginx.conf` and `./certs`, `depends_on`
 frontend / wso2apim / wso2is, on `wso2-network`.  
-**Status:** ⬜ pending
+**Status:** ✅ done
 
 ---
 
@@ -69,7 +69,7 @@ frontend / wso2apim / wso2is, on `wso2-network`.
 - `FRONTEND_URL` → `https://portal.local.test`
 - Remove exposed port `8000:8000` (backend is internal-only)
 
-**Status:** ⬜ pending
+**Status:** ✅ done
 
 ---
 
@@ -81,7 +81,7 @@ frontend / wso2apim / wso2is, on `wso2-network`.
 - `NEXT_PUBLIC_APIM_GATEWAY_URL` → `https://gateway.local.test`
   (same host — single entry point for everything)
 
-**Status:** ⬜ pending
+**Status:** ✅ done
 
 ---
 
@@ -92,7 +92,7 @@ frontend / wso2apim / wso2is, on `wso2-network`.
 root CA specifically rather than disabling all TLS verification.  
 Also add a volume mount for `./certs:/certs` on the `frontend` service in
 `docker-compose.yml` so the CA file is available at runtime.  
-**Status:** ⬜ pending
+**Status:** ✅ done
 
 ---
 
@@ -102,16 +102,24 @@ Also add a volume mount for `./certs:/certs` on the `frontend` service in
 (`NEXT_PUBLIC_APIM_GATEWAY_URL`). All API calls (`/lab/1.0/*`,
 `/auth/me`, `/auth/logout`) go through `NEXT_PUBLIC_BACKEND_URL` which is
 now the gateway URL. Update the `callApi` fetch URL accordingly.  
-**Status:** ⬜ pending
+**Status:** ✅ done
 
 ---
 
 ### T8 — Provide /etc/hosts entries
 **File(s):** documentation only (no file change)  
-**What:** Print the exact lines to add to `/etc/hosts` on both WSL
-(`/etc/hosts`) and Windows (`C:\Windows\System32\drivers\etc\hosts`) for
-the three `.local.test` hostnames pointing to `127.0.0.1`.  
-**Status:** ⬜ pending
+**What:** Add the following lines to `/etc/hosts` (WSL) and
+`C:\Windows\System32\drivers\etc\hosts` (Windows):
+
+```
+127.0.0.1  portal.local.test
+127.0.0.1  gateway.local.test
+127.0.0.1  is.local.test
+```
+
+On WSL run: `echo -e "127.0.0.1  portal.local.test\n127.0.0.1  gateway.local.test\n127.0.0.1  is.local.test" | sudo tee -a /etc/hosts`  
+On Windows: open `C:\Windows\System32\drivers\etc\hosts` as Administrator and add the three lines.  
+**Status:** ✅ done (docs provided)
 
 ---
 
@@ -119,13 +127,22 @@ the three `.local.test` hostnames pointing to `127.0.0.1`.
 **File(s):** documentation only (no file change)  
 **What:** Step-by-step instructions for configuring two APIs in the WSO2
 APIM Publisher UI:
-1. **BackendAuth API** — context `/auth`, security None (open), backend
-   endpoint `http://backend:8000`
-2. **LabAPI** — context `/lab`, security OAuth2 (existing), backend
-   endpoint `http://backend:8000` (change from whatever it currently points
-   to if needed)
 
-**Status:** ⬜ pending
+#### BackendAuth API (open — no auth)
+1. Log in to `https://gateway.local.test/publisher` (or `https://localhost:9443/publisher`)
+2. Create a new REST API — name `BackendAuth`, version `1.0`, context `/auth`
+3. Add resources: `GET /me`, `POST /login`, `GET /logout` (or wildcard `/*`)
+4. Under **Runtime** → **Backend** set endpoint to `http://backend:8000/auth`
+5. Under **Runtime** → **Application Level Security** uncheck all — set to **None** (open)
+6. Deploy to the Gateway and Publish
+
+#### LabAPI (secured — Bearer / IS JWT)
+1. Open the existing LabAPI (context `/lab`) in the Publisher
+2. Under **Runtime** → **Backend** verify endpoint is `http://backend:8000` (update if needed)
+3. Under **Runtime** → **Application Level Security** ensure **OAuth2** is checked
+4. Deploy and Publish (no change needed if already published with correct endpoint)
+
+**Status:** ✅ done (docs provided)
 
 ---
 

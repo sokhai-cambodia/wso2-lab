@@ -2,8 +2,7 @@
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 
-const BACKEND      = process.env.NEXT_PUBLIC_BACKEND_URL      ?? 'http://localhost:8000'
-const APIM_GATEWAY = process.env.NEXT_PUBLIC_APIM_GATEWAY_URL ?? 'https://localhost:8243'
+const BACKEND = process.env.NEXT_PUBLIC_BACKEND_URL ?? 'https://gateway.local.test'
 
 type User = { sub: string; name: string; email: string | null }
 type ApiResult = { status: number; ok: boolean; data: unknown } | { error: string } | null
@@ -43,10 +42,16 @@ export default function Dashboard() {
 
   useEffect(() => {
     const session = sessionStorage.getItem('wso2_token')
-    if (!session) {
+    const storedUser = sessionStorage.getItem('wso2_user')
+    if (!session || !storedUser) {
       router.replace('/')
       return
     }
+    setUser(JSON.parse(storedUser))
+
+    // /auth/me here is a liveness check only — it's routed through the secured
+    // LabAPI, so its claims come from APIM's user-store lookup (empty for
+    // federated GitHub users) rather than the id_token data captured at login.
     const controller = new AbortController()
     const timeoutId = setTimeout(() => controller.abort(), 8000)
     fetch(`${BACKEND}/auth/me`, {
@@ -55,10 +60,8 @@ export default function Dashboard() {
     })
       .then(res => {
         clearTimeout(timeoutId)
-        if (!res.ok) { sessionStorage.clear(); router.replace('/'); return null }
-        return res.json()
+        if (!res.ok) { sessionStorage.clear(); router.replace('/') }
       })
-      .then(data => data && setUser(data))
       .catch(() => { clearTimeout(timeoutId); router.replace('/') })
     return () => { clearTimeout(timeoutId); controller.abort() }
   }, [router])
@@ -69,7 +72,7 @@ export default function Dashboard() {
     setLoading(l => ({ ...l, [endpoint]: true }))
     setResults(r => ({ ...r, [endpoint]: null }))
     try {
-      const res = await fetch(`${APIM_GATEWAY}/lab/1.0/${endpoint}`, {
+      const res = await fetch(`${BACKEND}/lab/1.0/${endpoint}`, {
         headers: { Authorization: `Bearer ${token}` },
       })
       const data = await res.json()
@@ -179,7 +182,7 @@ export default function Dashboard() {
       </div>
 
       <p className="text-center text-xs text-gray-400 mt-8">
-        IS tokens · APIM Gateway :8243 (IS as Key Manager) · Backend :8000
+        IS tokens · APIM Gateway (gateway.local.test) · Backend internal-only
       </p>
     </main>
   )

@@ -8,14 +8,16 @@ WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 ENV NEXT_TELEMETRY_DISABLED=1
+ENV NEXT_PUBLIC_BACKEND_URL=https://gateway.local.test/lab/1.0
+ENV NEXT_PUBLIC_APIM_GATEWAY_URL=https://gateway.local.test
 RUN npm run build
 
 FROM node:20-alpine AS runner
 WORKDIR /app
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
-# Disable TLS verification for WSO2 self-signed certs (lab only)
-ENV NODE_TLS_REJECT_UNAUTHORIZED=0
+# Trust the mkcert root CA so Node.js accepts .local.test certs without disabling TLS entirely
+ENV NODE_EXTRA_CA_CERTS=/certs/rootCA.pem
 RUN addgroup --system --gid 1001 nodejs && adduser --system --uid 1001 nextjs
 COPY --from=builder /app/public* ./public/
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
