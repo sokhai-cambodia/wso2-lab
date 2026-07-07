@@ -1,0 +1,47 @@
+# Standalone mode — frontend + backend only, identity from ANY external OIDC
+# WSO2 IS: Asgardeo (https://api.asgardeo.io/t/<org>), another cloud IS, or a
+# dev/UAT on-prem IS. No nginx/APIM/IS/postgres/rabbitmq; the browser talks to
+# both services on plain http://localhost and the backend verifies Bearer JWTs
+# itself against the IdP's JWKS (GATEWAY_MODE=false).
+#
+# Requires in .env:  IDP_BASE_URL, IDP_CLIENT_ID, IDP_CLIENT_SECRET
+# The IdP app needs: redirect http://localhost:3000/callback, allowed origin
+# http://localhost:3000, access token type JWT — see "Standalone mode" in README.md.
+#
+# Run:   docker compose -f docker-compose.standalone.yml -p wso2-lab-standalone up -d --build
+# Stop the full lab first — it also binds host ports 3000 and 8000.
+services:
+  backend:
+    build: ./backend
+    container_name: standalone-backend
+    ports:
+      - "8000:8000"
+    environment:
+      - GATEWAY_MODE=false
+      # e.g. https://api.asgardeo.io/t/<org>  |  https://is-dev.example.com
+      - WSO2_IS_URL=${IDP_BASE_URL:?set IDP_BASE_URL in .env}
+      # Browser-facing base URL, if different from the backend-facing one
+      # (split-horizon dev/UAT setups); defaults to IDP_BASE_URL.
+      - WSO2_IS_PUBLIC_URL=${IDP_PUBLIC_BASE_URL:-${IDP_BASE_URL}}
+      - WSO2_IS_CLIENT_ID=${IDP_CLIENT_ID:?set IDP_CLIENT_ID in .env}
+      - WSO2_IS_CLIENT_SECRET=${IDP_CLIENT_SECRET:?set IDP_CLIENT_SECRET in .env}
+      # Connection names on the IdP for the two portal buttons. An empty name
+      # sends that button to the IdP's own login page (all sign-in options).
+      - GITHUB_IDP_NAME=${IDP_GITHUB_NAME:-}
+      - MICROSOFT_IDP_NAME=${IDP_MICROSOFT_NAME:-Microsoft}
+      - AUTH_CALLBACK_URL=http://localhost:3000/callback
+      - FRONTEND_URL=http://localhost:3000
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        - NEXT_PUBLIC_BACKEND_URL=http://localhost:8000
+    container_name: standalone-frontend
+    ports:
+      - "3000:3000"
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_started
