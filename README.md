@@ -22,6 +22,7 @@ See [LEARNING.md](LEARNING.md) for the full phase-by-phase journal.
 wso2-lab/
 ├── README.md            ← this file
 ├── LEARNING.md          ← detailed phase-by-phase journal
+├── PRACTICE.md          ← hands-on exercise runbook (Phases 5–7; see its header note)
 ├── .env.example         ← every overridable variable with its default (.env is optional)
 ├── docker-compose.yml            ← the full lab (gateway mode)
 ├── docker-compose.standalone.yml ← frontend+backend only, external IdP
