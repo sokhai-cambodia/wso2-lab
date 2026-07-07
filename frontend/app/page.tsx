@@ -15,12 +15,12 @@ export default function Home() {
     const path = provider === 'microsoft' ? '/auth/login-url/microsoft' : '/auth/login-url'
     try {
       const res = await fetch(`${BACKEND}${path}`, { signal: controller.signal })
-      // Remembered across the IS redirect (same tab) so the dashboard can show
-      // which IdP this session came from.
-      sessionStorage.setItem('wso2_idp', provider === 'microsoft' ? 'Microsoft' : 'GitHub')
       clearTimeout(timeoutId)
       if (!res.ok) throw new Error(`Backend error: ${res.status}`)
       const { url } = await res.json()
+      // Remembered across the IS redirect (same tab) so the dashboard can show
+      // which IdP this session came from.
+      sessionStorage.setItem('wso2_idp', provider === 'microsoft' ? 'Microsoft' : 'GitHub')
       window.location.href = url
     } catch (e) {
       clearTimeout(timeoutId)

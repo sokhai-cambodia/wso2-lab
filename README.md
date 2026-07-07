@@ -44,8 +44,8 @@ Everything is pre-baked: the repo commits the TLS certs, the WSO2 keystores, *an
 seed dumps of the fully configured databases (IS Service Provider + GitHub
 connection, APIM Key Manager, LabAPI published + subscribed). On first boot with
 an empty volume, Postgres auto-creates and seeds all three databases — **no manual
-IS/APIM console setup needed**, except pasting your own GitHub OAuth credentials
-once (step 3 — the one secret a public repo can't ship).
+IS/APIM console setup needed**, except pasting your own IdP OAuth credentials once
+(steps 3–4 — the secrets a public repo can't ship; GitHub required, Microsoft optional).
 
 1. Add hosts entries (the one unavoidable host-machine step):
    ```
@@ -74,22 +74,18 @@ once (step 3 — the one secret a public repo can't ship).
    2. IS Console (`https://localhost:9444/console`, `admin`/`admin`) →
       **Connections** → **github** → paste your Client ID and Client Secret → save.
 
-4. *(Optional)* Add **Login with Microsoft** (~5 min — not in the seed dumps, so
-   it's a manual one-time setup; the GitHub path works without it):
+4. *(Optional)* Connect **Login with Microsoft** (~5 min — the connection ships in
+   the seed dumps with its secret scrubbed, same as GitHub; the GitHub path works
+   without this step):
    1. [Azure portal](https://portal.azure.com) → **Microsoft Entra ID** → **App
       registrations** → **New registration**: account type *"Any org directory +
       personal Microsoft accounts"*, platform **Web**, redirect URI
       `https://localhost:9444/commonauth`. Copy the **Application (client) ID**,
       then **Certificates & secrets** → new secret → copy its **Value** (shown once).
-   2. IS Console → **Connections** → **New Connection** → name it exactly
-      `Microsoft` (or set `MICROSOFT_IDP_NAME` in `.env` to whatever you pick).
-      Use the **Microsoft** template, or **Standard-Based IdP** (OIDC) with
-      endpoints `https://login.microsoftonline.com/common/oauth2/v2.0/{authorize,token}`,
-      scopes `openid profile email`, and JWKS
-      `https://login.microsoftonline.com/common/discovery/v2.0/keys`.
-   3. On the connection: enable **Just-in-Time Provisioning** (userstore PRIMARY).
-      Then **Applications** → the portal app → **Login Flow** → add **Microsoft**
-      as a sign-in option → save.
+   2. IS Console → **Connections** → **microsoft login** → paste your Client ID
+      and Client Secret → save. (The connection is a Standard-Based OIDC IdP
+      against `login.microsoftonline.com/common`, JIT provisioning enabled, and
+      already wired into the app's Login Flow — only the credentials are missing.)
 
 5. *(Optional, kills browser warnings)* Trust the lab CA: import `certs/rootCA.pem`
    into your OS/browser trust store. Skipping this just means clicking through a
