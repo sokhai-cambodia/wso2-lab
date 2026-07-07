@@ -47,7 +47,8 @@ IS_URL        = os.getenv("WSO2_IS_URL",        "https://wso2is:9444")     # Doc
 IS_PUBLIC_URL = os.getenv("WSO2_IS_PUBLIC_URL", "https://localhost:9444")  # browser-accessible
 IS_CLIENT_ID  = os.getenv("WSO2_IS_CLIENT_ID",  "")
 IS_CLIENT_SECRET = os.getenv("WSO2_IS_CLIENT_SECRET", "")
-GITHUB_IDP_NAME  = os.getenv("GITHUB_IDP_NAME", "github")  # must match IS connection name exactly
+GITHUB_IDP_NAME    = os.getenv("GITHUB_IDP_NAME", "github")  # must match IS connection name exactly
+MICROSOFT_IDP_NAME = os.getenv("MICROSOFT_IDP_NAME", "Microsoft")  # must match IS connection name exactly
 
 APIM_URL = os.getenv("WSO2_APIM_URL", "https://wso2apim:9443")  # for JWKS only
 
@@ -207,14 +208,15 @@ def reports(x_jwt_assertion: str = Header(default=None)):
 # ===========================================================================
 # Section 2 — Auth flow (called by frontend, via the gateway)
 #
-# GET  /auth/login-url  → returns IS authorize URL (fidp skips IS login screen)
+# GET  /auth/login-url            → returns IS authorize URL, fidp=GitHub
+# GET  /auth/login-url/microsoft  → same, fidp=Microsoft
+#                         (fidp skips IS's login screen for that connection)
 # POST /auth/exchange   → exchanges IS code for tokens; returns access_token +
 #                         the id_token-derived user profile (frontend stores both)
 # GET  /auth/me         → session liveness check; echoes X-JWT-Assertion claims
 # ===========================================================================
 
-@app.get("/auth/login-url")
-def auth_login_url():
+def _build_login_url(idp_name: str) -> dict:
     if not IS_CLIENT_ID:
         raise HTTPException(status_code=503, detail="WSO2_IS_CLIENT_ID not configured.")
     state = secrets.token_urlsafe(16)
@@ -226,11 +228,21 @@ def auth_login_url():
         "redirect_uri":          AUTH_CALLBACK_URL,
         "scope":                 "openid profile email",
         "state":                 state,
-        "fidp":                  GITHUB_IDP_NAME,
+        "fidp":                  idp_name,
         "code_challenge":        challenge,
         "code_challenge_method": "S256",
     })
     return {"url": f"{IS_PUBLIC_URL}/oauth2/authorize?{params}"}
+
+
+@app.get("/auth/login-url")
+def auth_login_url():
+    return _build_login_url(GITHUB_IDP_NAME)
+
+
+@app.get("/auth/login-url/microsoft")
+def auth_login_url_microsoft():
+    return _build_login_url(MICROSOFT_IDP_NAME)
 
 
 class ExchangeRequest(BaseModel):

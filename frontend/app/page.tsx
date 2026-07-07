@@ -4,16 +4,17 @@ import { useState } from 'react'
 const BACKEND = process.env.NEXT_PUBLIC_BACKEND_URL ?? 'http://localhost:8000'
 
 export default function Home() {
-  const [loading, setLoading] = useState(false)
+  const [loading, setLoading] = useState<'github' | 'microsoft' | null>(null)
   const [error, setError] = useState('')
 
-  async function handleLogin() {
-    setLoading(true)
+  async function handleLogin(provider: 'github' | 'microsoft') {
+    setLoading(provider)
     setError('')
     const controller = new AbortController()
     const timeoutId = setTimeout(() => controller.abort(), 8000)
+    const path = provider === 'microsoft' ? '/auth/login-url/microsoft' : '/auth/login-url'
     try {
-      const res = await fetch(`${BACKEND}/auth/login-url`, { signal: controller.signal })
+      const res = await fetch(`${BACKEND}${path}`, { signal: controller.signal })
       clearTimeout(timeoutId)
       if (!res.ok) throw new Error(`Backend error: ${res.status}`)
       const { url } = await res.json()
@@ -25,7 +26,7 @@ export default function Home() {
           ? 'Request timed out — is the backend running? (docker compose ps)'
           : e instanceof Error ? e.message : String(e)
       )
-      setLoading(false)
+      setLoading(null)
     }
   }
 
@@ -42,7 +43,7 @@ export default function Home() {
         <div className="bg-blue-50 rounded-lg p-4 mb-8 text-left text-sm text-blue-800">
           <p className="font-semibold mb-1">What this demo shows:</p>
           <ul className="list-disc list-inside space-y-1">
-            <li>GitHub login via WSO2 IS (OIDC)</li>
+            <li>GitHub / Microsoft login via WSO2 IS (OIDC)</li>
             <li>Public API — no extra auth</li>
             <li>Secure API — JWT assertion from APIM</li>
             <li>Reports API — scope-protected (analyst role)</li>
@@ -56,15 +57,23 @@ export default function Home() {
         )}
 
         <button
-          onClick={handleLogin}
-          disabled={loading}
+          onClick={() => handleLogin('github')}
+          disabled={loading !== null}
           className="w-full bg-gray-900 text-white py-3 px-6 rounded-xl font-medium hover:bg-gray-700 disabled:opacity-50 transition-colors"
         >
-          {loading ? 'Redirecting…' : 'Login with GitHub via WSO2 IS'}
+          {loading === 'github' ? 'Redirecting…' : 'Login with GitHub via WSO2 IS'}
+        </button>
+
+        <button
+          onClick={() => handleLogin('microsoft')}
+          disabled={loading !== null}
+          className="mt-3 w-full bg-blue-600 text-white py-3 px-6 rounded-xl font-medium hover:bg-blue-500 disabled:opacity-50 transition-colors"
+        >
+          {loading === 'microsoft' ? 'Redirecting…' : 'Login with Microsoft via WSO2 IS'}
         </button>
 
         <p className="mt-6 text-xs text-gray-400">
-          GitHub → WSO2 IS → APIM Gateway → FastAPI Backend
+          GitHub / Microsoft → WSO2 IS → APIM Gateway → FastAPI Backend
         </p>
       </div>
     </main>
