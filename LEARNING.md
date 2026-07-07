@@ -773,4 +773,40 @@ After an unclean container death (e.g. Postgres stopped while IS/APIM still had 
 
 ---
 
-*Document complete — Phases 1 through 8 covered.*
+## 🔵 Phase 10: Second Federated IdP — Microsoft Entra ID
+
+### What You Learned
+- Adding a **second federated IdP** (Microsoft Entra ID) alongside GitHub — the "door vs room" model from Phase 3 scales: one new door, same room
+- The **Standard-Based OIDC connection** end-to-end: unlike the GitHub template, you wire authorize/token/userinfo endpoints, scopes, and the JWKS URL yourself
+- Why a new backend route needs a **matching APIM resource**: LabAPI's secured `/*` catch-all swallows unknown paths, so `/auth/login-url/microsoft` had to be added to the swagger with auth-type `None` (it's called *before* login) and deployed as a new revision
+- Microsoft's `{tenant}` endpoint segment: `common` (any account) vs `consumers` (personal) vs a tenant ID (single org) — `common` can trip strict id_token issuer validation
+
+### Milestone 1: Entra ID app registration
+| Field | Value |
+|-------|-------|
+| Supported account types | Multitenant + personal Microsoft accounts |
+| Redirect URI (Web) | `https://localhost:9444/commonauth` |
+| Authorization endpoint | `https://login.microsoftonline.com/common/oauth2/v2.0/authorize` |
+| Token endpoint | `https://login.microsoftonline.com/common/oauth2/v2.0/token` |
+| User info endpoint | `https://graph.microsoft.com/oidc/userinfo` |
+| JWKS endpoint | `https://login.microsoftonline.com/common/discovery/v2.0/keys` |
+| Scopes | `openid profile email` |
+
+Same IS-side pattern as Phase 3: JIT provisioning on (PRIMARY), connection added to the app's Login Flow. The `fidp` query param selects the connection, so the portal shows two buttons and IS's own login page is never seen.
+
+### Milestone 2: Dedicated route through the gateway
+- Backend: `GET /auth/login-url/microsoft` (shared `_build_login_url()` helper; connection name from `MICROSOFT_IDP_NAME`)
+- APIM: swagger resource added via Publisher REST API, new revision deployed — **a backend route that isn't an APIM resource doesn't exist** as far as the browser is concerned
+- Frontend: second login button; `wso2_idp` kept in `sessionStorage` so the dashboard shows which IdP the session came from
+
+### Bug found during review
+`callApi` in the dashboard prefixed `/lab/1.0/` onto a `NEXT_PUBLIC_BACKEND_URL` that already ends in `/lab/1.0` — the doubled context (`/lab/1.0/lab/1.0/...`) fell into the secured `/*` catch-all and 404'd at the backend. Fixed by treating `NEXT_PUBLIC_BACKEND_URL` as *always including* the LabAPI context, with all three pages sharing the same fallback.
+
+### Key Concepts
+- **One broker, many doors** — adding an IdP touches IS config only; token issuance, gateway validation, and the backend contract are unchanged
+- **The gateway's resource list is the real API surface** — the backend can grow routes freely, but nothing is reachable until the swagger + revision deploy says so
+- **Pre-login routes need auth-type `None`** — everything else on the API inherits OAuth2 protection
+
+---
+
+*Document complete — Phases 1 through 10 covered.*

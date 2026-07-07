@@ -1,7 +1,7 @@
 'use client'
 import { useState } from 'react'
 
-const BACKEND = process.env.NEXT_PUBLIC_BACKEND_URL ?? 'http://localhost:8000'
+const BACKEND = process.env.NEXT_PUBLIC_BACKEND_URL ?? 'https://gateway.local.test/lab/1.0'
 
 export default function Home() {
   const [loading, setLoading] = useState<'github' | 'microsoft' | null>(null)
@@ -15,6 +15,9 @@ export default function Home() {
     const path = provider === 'microsoft' ? '/auth/login-url/microsoft' : '/auth/login-url'
     try {
       const res = await fetch(`${BACKEND}${path}`, { signal: controller.signal })
+      // Remembered across the IS redirect (same tab) so the dashboard can show
+      // which IdP this session came from.
+      sessionStorage.setItem('wso2_idp', provider === 'microsoft' ? 'Microsoft' : 'GitHub')
       clearTimeout(timeoutId)
       if (!res.ok) throw new Error(`Backend error: ${res.status}`)
       const { url } = await res.json()

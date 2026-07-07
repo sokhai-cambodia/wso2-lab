@@ -2,7 +2,8 @@
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 
-const BACKEND = process.env.NEXT_PUBLIC_BACKEND_URL ?? 'https://gateway.local.test'
+// Includes the LabAPI context (/lab/1.0) — all routes below are relative to it.
+const BACKEND = process.env.NEXT_PUBLIC_BACKEND_URL ?? 'https://gateway.local.test/lab/1.0'
 
 type User = { sub: string; name: string; email: string | null }
 type ApiResult = { status: number; ok: boolean; data: unknown } | { error: string } | null
@@ -37,6 +38,7 @@ const colorMap: Record<string, string> = {
 export default function Dashboard() {
   const router = useRouter()
   const [user, setUser] = useState<User | null>(null)
+  const [idp, setIdp] = useState('—')
   const [results, setResults] = useState<Record<string, ApiResult>>({})
   const [loading, setLoading] = useState<Record<string, boolean>>({})
 
@@ -48,6 +50,7 @@ export default function Dashboard() {
       return
     }
     setUser(JSON.parse(storedUser))
+    setIdp(sessionStorage.getItem('wso2_idp') ?? '—')
 
     // /auth/me here is a liveness check only — it's routed through the secured
     // LabAPI, so its claims come from APIM's user-store lookup (empty for
@@ -72,7 +75,7 @@ export default function Dashboard() {
     setLoading(l => ({ ...l, [endpoint]: true }))
     setResults(r => ({ ...r, [endpoint]: null }))
     try {
-      const res = await fetch(`${BACKEND}/lab/1.0/${endpoint}`, {
+      const res = await fetch(`${BACKEND}/${endpoint}`, {
         headers: { Authorization: `Bearer ${token}` },
       })
       const data = await res.json()
@@ -123,7 +126,7 @@ export default function Dashboard() {
         <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">IS Session</p>
         <div className="grid grid-cols-2 gap-2 text-sm">
           <div><span className="text-gray-500">Provider:</span> <span className="font-mono">WSO2 IS 7.0.0</span></div>
-          <div><span className="text-gray-500">IdP:</span> <span className="font-mono">GitHub</span></div>
+          <div><span className="text-gray-500">IdP:</span> <span className="font-mono">{idp}</span></div>
           <div><span className="text-gray-500">Name:</span> <span className="font-mono">{user.name}</span></div>
           <div><span className="text-gray-500">Email:</span> <span className="font-mono">{user.email ?? '—'}</span></div>
         </div>

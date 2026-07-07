@@ -10,7 +10,7 @@
 | nginx | `*.local.test:443` | `nginx` | TLS termination (mkcert), reverse proxy — the only thing the browser talks to |
 | Next.js frontend | `portal.local.test` | `frontend` | UI; stores token + user profile in `sessionStorage` |
 | WSO2 APIM 4.3.0 | `gateway.local.test` | `wso2apim` | Gateway: token validation, subscription check, JWT injection |
-| WSO2 IS 7.0.0 | `is.local.test` / `localhost:9444` | `wso2is` | OIDC broker (GitHub federation), APIM's Key Manager |
+| WSO2 IS 7.0.0 | `is.local.test` / `localhost:9444` | `wso2is` | OIDC broker (GitHub + Microsoft federation), APIM's Key Manager |
 | FastAPI backend | *none — internal only* | `backend` | Auth flow + resource endpoints; reachable only from APIM |
 | PostgreSQL | — | `postgres` | `shared_db`, `identity_db`, `apim_db` — both WSO2 products depend on it |
 
@@ -28,21 +28,23 @@ The only caller identity that reaches the backend is `X-JWT-Assertion` — a JWT
 ## Login lifecycle (a → z)
 
 ```
-1. portal.local.test            Browser clicks "Login"
+1. portal.local.test            Browser clicks "Login with GitHub" or "Login with Microsoft"
 2. GET  /auth/login-url         Backend builds IS authorize URL: PKCE pair generated,
-                                state stored server-side, fidp=github skips IS's login page
-3. IS → GitHub → IS             User approves on GitHub; IS mints an authorization code,
-                                redirects to https://portal.local.test/callback?code=...&state=...
+        (or /auth/login-url/    state stored server-side, fidp=<connection name> makes IS
+         microsoft)             skip its own login page and go straight to that IdP
+3. IS → IdP → IS                User approves on GitHub/Microsoft; IS mints an authorization
+                                code, redirects to https://portal.local.test/callback?code=...&state=...
 4. POST /auth/exchange          Backend validates state, exchanges code+verifier at IS
                                 /oauth2/token → { access_token, id_token }
-5. Frontend stores BOTH:        wso2_token  = access_token          (for API calls)
+5. Frontend stores ALL of:      wso2_token  = access_token          (for API calls)
                                 wso2_user   = {sub,name,email}      (decoded from id_token)
+                                wso2_idp    = GitHub | Microsoft    (for the dashboard display)
 ```
 
 **Why the user profile comes from the `id_token`, not from `/auth/me`:** APIM's injected
 claims are looked up in IS's *local user store* at request time — which is empty or partial
-for federated GitHub users (unless JIT provisioning is configured just right). The `id_token`
-captured once at login reflects what GitHub actually sent. The dashboard displays the stored
+for federated users (unless JIT provisioning is configured just right). The `id_token`
+captured once at login reflects what the IdP actually sent. The dashboard displays the stored
 profile; `/auth/me` is only a liveness check (its 200/401 matters, its body doesn't).
 
 ## API request lifecycle (every dashboard call)

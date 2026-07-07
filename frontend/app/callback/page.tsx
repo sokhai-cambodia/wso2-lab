@@ -2,7 +2,7 @@
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 
-const BACKEND = process.env.NEXT_PUBLIC_BACKEND_URL ?? 'http://localhost:8000'
+const BACKEND = process.env.NEXT_PUBLIC_BACKEND_URL ?? 'https://gateway.local.test/lab/1.0'
 
 export default function Callback() {
   const router = useRouter()

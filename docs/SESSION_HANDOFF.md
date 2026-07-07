@@ -8,8 +8,11 @@ A local Docker lab for WSO2 API Manager (APIM) + Identity Server (IS), backed by
 
 ## Git state as of this handoff
 
-- Branch: `feature/apim-gateway-migration`, pushed to `origin`. **Not yet merged to `main`.**
-- Last two commits on this branch:
+- ~~Branch: `feature/apim-gateway-migration`, pushed to `origin`. **Not yet merged to `main`.**~~
+  **Update (Jul 2026):** merged to `main` as PR #1. Later sessions added Microsoft
+  Entra ID as a second federated IdP (see `LEARNING.md` Phase 10) — this doc is
+  kept as the historical record of the gateway-migration debugging itself.
+- Last two commits on the migration branch:
   1. `Complete APIM gateway migration and fix federated auth claims` — nginx TLS ingress, `/auth/me` claim-source fix, frontend keeps login-time user data instead of re-deriving it
   2. `Persist regenerated IS/APIM certs via volume mount, document Phase 9` — makes the cert fix survive `docker compose down`, adds the Phase 9 journal entry
 
@@ -49,7 +52,7 @@ Also added: `docs/ARCHITECTURE.md` — full runtime lifecycle (login a→z, per-
 
 ## Also worth doing soon
 
-- Open a PR to merge `feature/apim-gateway-migration` → `main` now that the flow works end-to-end — avoids this context going stale.
+- ~~Open a PR to merge `feature/apim-gateway-migration` → `main`~~ ✅ merged (PR #1).
 - A fresh-clone / `docker compose down -v` dry run to confirm the README's Quick Start actually works from zero, not just on a machine with leftover state.
 
 ## Where to look for more detail

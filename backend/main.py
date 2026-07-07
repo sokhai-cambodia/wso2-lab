@@ -3,11 +3,12 @@ WSO2 Lab Backend — every endpoint here sits behind the APIM gateway
 (https://gateway.local.test, LabAPI context /lab/1.0). Nothing calls this
 service directly; it has no exposed host port.
 
-Login flow (WSO2 IS as OIDC broker, GitHub as federated IdP):
-  Browser → GET /auth/login-url
-          → IS authorize URL with fidp=<GitHub connection name>
-          → IS skips its login screen, redirects straight to GitHub
-          → GitHub auth → IS /commonauth → https://portal.local.test/callback?code=xxx
+Login flow (WSO2 IS as OIDC broker; GitHub and Microsoft as federated IdPs):
+  Browser → GET /auth/login-url            (GitHub)
+         or GET /auth/login-url/microsoft  (Microsoft Entra ID)
+          → IS authorize URL with fidp=<IS connection name>
+          → IS skips its login screen, redirects straight to that IdP
+          → IdP auth → IS /commonauth → https://portal.local.test/callback?code=xxx
           → POST /auth/exchange {code} → IS /oauth2/token → access_token + id_token
           → frontend keeps the id_token-derived user profile and sends the
             access_token to the APIM gateway on every call (IS is APIM's Key Manager)
