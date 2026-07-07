@@ -3,6 +3,26 @@
 > **Before you start:** All config files, Docker services, and the FastAPI backend have already been written.
 > This document is your hands-on practice runbook — follow each step in order.
 
+> ⚠️ **Historical runbook — read this first.** This guide predates Phase 9 (gateway
+> migration) and Phase 10–11, so three things have changed since it was written:
+>
+> 1. **All browser traffic now goes through nginx + the APIM gateway.** The portal
+>    lives at `https://portal.local.test`, the gateway at `https://gateway.local.test`,
+>    and the OAuth callback is `https://portal.local.test/callback` — wherever this
+>    doc says `http://localhost:3000`, read it through that lens (the raw ports are
+>    still mapped, so direct-port URLs mostly work for poking around).
+> 2. **The seed dumps pre-bake almost everything these steps create** — LabAPI with
+>    its resources and scopes, the IS application, the github/microsoft connections,
+>    the Key Manager registration, and the subscription. A fresh clone does **not**
+>    need to perform the setup steps; treat them as walkthroughs of *how it was built*
+>    (they only need doing after a `docker compose down -v` + vanilla rebuild).
+> 3. **IS is APIM's Key Manager** (Phase 7) — tokens come from IS. Step 6.4's intro
+>    describing APIM's *built-in* Key Manager reflects the pre-Phase-7 state.
+>
+> Current setup and troubleshooting live in [README.md](README.md) and
+> [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md); the phase journal is
+> [LEARNING.md](LEARNING.md). For the no-gateway variant, see README "Standalone mode".
+
 ---
 
 ## Stack Overview
@@ -34,13 +54,14 @@
 
 | Service | URL | Login |
 |---------|-----|-------|
-| **Next.js Frontend** | http://localhost:3000 | GitHub via WSO2 IS |
+| **Portal (Next.js via nginx)** | https://portal.local.test | GitHub / Microsoft via WSO2 IS |
+| **APIM Gateway (via nginx)** | https://gateway.local.test/lab/1.0 | Bearer token |
 | APIM Publisher | https://localhost:9443/publisher | admin / admin |
 | APIM Admin | https://localhost:9443/admin | admin / admin |
 | APIM DevPortal | https://localhost:9443/devportal | admin / admin |
 | WSO2 IS Console | https://localhost:9444/console | admin / admin |
 | RabbitMQ UI | http://localhost:15672 | guest / guest |
-| FastAPI Backend | http://localhost:8000/health | — |
+| FastAPI Backend (direct port) | http://localhost:8000/health | — |
 | FastAPI API Docs | http://localhost:8000/docs | — |
 
 ---
@@ -122,7 +143,7 @@ User logged in ✅  (Frontend stores IS access_token, calls APIM gateway directl
 
 5. Click **Finish**
 
-> **Note the exact connection name you use** — it must match `GITHUB_IDP_NAME` in `.env`. If you name it `GitHub`, set `GITHUB_IDP_NAME=GitHub`.
+> **Note the exact connection name you use** — it must match `GITHUB_IDP_NAME` in `.env`, **case-sensitively** (`fidp` matching is exact). The seeded connection is named `github` (lowercase), which matches the compose default `GITHUB_IDP_NAME=github`.
 
 > **If you don't see a GitHub template**, choose **Custom Connector → OAuth2/OIDC** and set:
 > - Authorization Endpoint URL: `https://github.com/login/oauth/authorize`
@@ -173,8 +194,9 @@ Open `.env` in the project root:
 WSO2_IS_CLIENT_ID=<paste Client ID>
 WSO2_IS_CLIENT_SECRET=<paste Client Secret>
 
-# Must exactly match the connection name you used in Step 0A.2
-GITHUB_IDP_NAME=GitHub
+# Must exactly match the connection name you used in Step 0A.2 (case-sensitive;
+# the seeded connection is lowercase "github")
+GITHUB_IDP_NAME=github
 ```
 
 > `APIM_CLIENT_ID` / `APIM_CLIENT_SECRET` are no longer needed — the frontend sends the IS token directly to the APIM gateway. No backend credential swap is required.
@@ -261,6 +283,10 @@ wso2-frontend       running
 ---
 
 ### Step 0.4 — Create the Lab API
+
+> **Already seeded:** a fresh clone gets `LabAPI` pre-published (with the auth
+> resources and the `read:reports` scope) and a subscribed application. Do this
+> step only after a vanilla rebuild (`docker compose down -v` without seed dumps).
 
 You need one API in APIM to test all Phase 5 & 6 features against.
 
@@ -1014,7 +1040,7 @@ Expected:
 | Browser shows CORS error on gateway call | CORS not enabled | Step 7.3 — add `http://localhost:3000` in Publisher → Runtime → CORS |
 | Browser blocks `https://localhost:8243` | Self-signed cert | Visit `https://localhost:8243` directly and accept the cert (Step 7.4) |
 | `401 Unauthorized` from APIM gateway | IS token not accepted | Confirm Key Manager is saved and APIM was restarted after cert import |
-| Frontend calls `localhost:8000` not `:8243` | Missing env var | Add `NEXT_PUBLIC_APIM_GATEWAY_URL=https://localhost:8243` to `frontend/.env.local` |
+| Frontend calls the wrong backend URL | Build-time value baked into the bundle | `NEXT_PUBLIC_BACKEND_URL` is a **build arg** (default `https://gateway.local.test/lab/1.0`) — change it in `.env` and run `docker compose build frontend && docker compose up -d frontend` |
 
 ---
 
