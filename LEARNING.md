@@ -809,4 +809,30 @@ Same IS-side pattern as Phase 3: JIT provisioning on (PRIMARY), connection added
 
 ---
 
-*Document complete — Phases 1 through 10 covered.*
+## ⚪ Phase 11: Standalone Mode — External IdP, No Gateway
+
+### What You Learned
+- Running the same app against **Asgardeo** (WSO2's SaaS IS) — and, by the same mechanism, any cloud or dev/UAT on-prem IS — with only frontend + backend running locally
+- What removing the gateway actually costs: **the trust boundary moves into the backend**. "The one rule" (APIM strips `Authorization`, injects `X-JWT-Assertion`) inverts — the backend now receives the raw Bearer token and must verify signature, expiry, and scopes itself
+- Why the IdP app's **access token type must be JWT**: the backend self-validates against the IdP's JWKS; an opaque token would force an introspection round-trip per request instead
+- What `fidp` *really* does, seen from the other side: a button with no `fidp` lands on the IdP's **hosted login page**, where *any* configured sign-in method works — the portal button's label doesn't constrain how the user authenticates (the "GitHub" button happily logs you in via Asgardeo credentials)
+
+### Milestone: GATEWAY_MODE toggle
+| | Gateway mode (default) | Standalone mode |
+|---|---|---|
+| Caller identity | `X-JWT-Assertion` (APIM-signed) | Raw `Authorization: Bearer` JWT |
+| Signature check against | APIM's JWKS | IdP's JWKS (`<base>/oauth2/jwks`) |
+| Scope enforcement (`read:reports`) | APIM, at the edge | Backend, in the handler |
+| Trust boundary | The gateway | The backend itself |
+| Login flow (PKCE, state, exchange) | identical | identical |
+
+Config surface: `IDP_BASE_URL` + `IDP_CLIENT_ID`/`IDP_CLIENT_SECRET` (+ optional `IDP_PUBLIC_BASE_URL` for split-horizon setups, `IDP_MICROSOFT_NAME`/`IDP_GITHUB_NAME` for the buttons). IdP app needs redirect `http://localhost:3000/callback` and JWT access tokens.
+
+### Key Concepts
+- **The gateway was doing real work** — token validation, scope gating, and claim injection all had to be reimplemented in ~40 backend lines the moment it disappeared
+- **Same product, three shapes** — self-hosted IS in Docker, Asgardeo SaaS, and a remote on-prem instance are interchangeable behind one `IDP_BASE_URL` because the OIDC surface is identical
+- **`fidp` is a UX shortcut, not a security control** — it pre-selects a connection; omitting it just defers the choice to the IdP's hosted page
+
+---
+
+*Document complete — Phases 1 through 11 covered.*
