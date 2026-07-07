@@ -36,7 +36,7 @@ services:
       - "9444:9444"
     command: ["sh", "-c", "/home/wso2carbon/docker-entrypoint.sh -DportOffset=1 -Dorg.wso2.IdentityRESTAPISecurity.disableBasicAuth=false"]
     environment:
-      - JVM_MEM_OPTS=-Xms1g -Xmx2g
+      - JVM_MEM_OPTS=${IS_JVM_MEM_OPTS:--Xms1g -Xmx2g}
     volumes:
       - ./libs/postgresql-42.7.3.jar:/home/wso2carbon/wso2is-7.0.0/repository/components/lib/postgresql-42.7.3.jar
       - ./config/is/deployment.toml:/home/wso2carbon/wso2is-7.0.0/repository/conf/deployment.toml
@@ -65,7 +65,7 @@ services:
       - "8243:8243"
       - "8280:8280"
     environment:
-      - JVM_MEM_OPTS=-Xms1g -Xmx2g
+      - JVM_MEM_OPTS=${APIM_JVM_MEM_OPTS:--Xms1g -Xmx2g}
     volumes:
       - ./libs/postgresql-42.7.3.jar:/home/wso2carbon/wso2am-4.3.0/repository/components/lib/postgresql-42.7.3.jar
       - ./config/apim/deployment.toml:/home/wso2carbon/wso2am-4.3.0/repository/conf/deployment.toml
@@ -114,7 +114,7 @@ services:
     environment:
       # WSO2 IS — broker for GitHub federated login (compose service name;
       # same container as wso2is-local, standardized on the service name)
-      - WSO2_IS_URL=https://wso2is:9444
+      - WSO2_IS_URL=${WSO2_IS_URL:-https://wso2is:9444}
       - WSO2_IS_PUBLIC_URL=${WSO2_IS_PUBLIC_URL:-https://localhost:9444}
       # Defaults match the Service Provider baked into the seed dumps, so a
       # fresh clone needs no .env. Lab-only credentials — committed on purpose.
@@ -124,7 +124,7 @@ services:
       - GITHUB_IDP_NAME=${GITHUB_IDP_NAME:-GitHub}
       - MICROSOFT_IDP_NAME=${MICROSOFT_IDP_NAME:-Microsoft}
       # WSO2 APIM — URL used only to load JWKS for X-JWT-Assertion verification
-      - WSO2_APIM_URL=https://wso2apim:9443
+      - WSO2_APIM_URL=${WSO2_APIM_URL:-https://wso2apim:9443}
       # OAuth callback URL — must match IS registered callback (browser-accessible)
       - AUTH_CALLBACK_URL=${AUTH_CALLBACK_URL:-https://portal.local.test/callback}
       - FRONTEND_URL=${FRONTEND_URL:-https://portal.local.test}
@@ -146,7 +146,7 @@ services:
     build:
       context: ./frontend
       args:
-        - NEXT_PUBLIC_BACKEND_URL=https://gateway.local.test/lab/1.0
+        - NEXT_PUBLIC_BACKEND_URL=${NEXT_PUBLIC_BACKEND_URL:-https://gateway.local.test/lab/1.0}
     container_name: wso2-frontend
     ports:
       - "3000:3000"
