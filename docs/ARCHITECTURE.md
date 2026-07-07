@@ -14,7 +14,7 @@
 | FastAPI backend | *none — internal only* | `backend` | Auth flow + resource endpoints; reachable only from APIM |
 | PostgreSQL | — | `postgres` | `shared_db`, `identity_db`, `apim_db` — both WSO2 products depend on it |
 
-## The one rule
+## The one rule (gateway mode)
 
 **APIM consumes the `Authorization` header on secured routes and does not forward it.**
 The only caller identity that reaches the backend is `X-JWT-Assertion` — a JWT that APIM signs
@@ -24,6 +24,20 @@ The only caller identity that reaches the backend is `X-JWT-Assertion` — a JWT
   (the gateway is the trust boundary; nothing reaches the backend without passing it).
 - Any endpoint that needs the **raw** access token (e.g. IS `/oauth2/revoke`) cannot exist
   behind the gateway. This is why logout is client-side only.
+
+## Standalone mode (GATEWAY_MODE=false)
+
+`docker-compose.standalone.yml` runs only frontend + backend on plain localhost, with any
+external WSO2 IS (Asgardeo, cloud, dev/UAT on-prem) as the IdP. With no gateway in front,
+**the one rule inverts**: the browser sends `Authorization: Bearer` straight to the backend,
+which becomes the trust boundary itself — it verifies the JWT's signature against the IdP's
+JWKS (`<IDP_BASE_URL>/oauth2/jwks`) and enforces scopes (e.g. `read:reports`) on its own.
+This only works when the IdP issues **JWT** access tokens (opaque tokens would need
+introspection instead). Login-flow mechanics are unchanged — same PKCE + state handling,
+same `/auth/exchange`; only the token-validation side differs. A button without a
+configured `fidp` connection name lands on the IdP's own hosted login page, where any
+sign-in method the IdP offers works — the portal's button label doesn't constrain how the
+user actually authenticates.
 
 ## Login lifecycle (a → z)
 

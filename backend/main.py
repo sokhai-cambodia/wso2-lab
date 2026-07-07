@@ -21,6 +21,13 @@ Any handler that needs the raw access token cannot exist behind this gateway.
 Claim shape inside X-JWT-Assertion follows apim.jwt.convert_dialect in
 config/apim/deployment.toml — currently `true`, so keys are flat (name, email),
 not http://wso2.org/claims/* URIs.
+
+GATEWAY_MODE=false (standalone / no-gateway mode): the browser calls this
+service directly and THE ONE RULE no longer applies — there is no APIM in
+front, so the backend becomes the trust boundary itself. Secured endpoints then
+read the raw `Authorization: Bearer` JWT and verify its signature against the
+IdP's JWKS. Works with any external WSO2 IS — Asgardeo, cloud, or dev/UAT
+on-prem — as long as it issues JWT access tokens. See docker-compose.standalone.yml.
 """
 
 import os
@@ -55,7 +62,13 @@ APIM_URL = os.getenv("WSO2_APIM_URL", "https://wso2apim:9443")  # for JWKS only
 
 AUTH_CALLBACK_URL = os.getenv("AUTH_CALLBACK_URL", "https://portal.local.test/callback")
 FRONTEND_URL      = os.getenv("FRONTEND_URL",      "https://portal.local.test")
-APIM_JWKS_URL     = f"{APIM_URL}/oauth2/jwks"
+
+# true  → behind APIM: caller identity arrives as X-JWT-Assertion (signed by APIM)
+# false → no gateway (e.g. Asgardeo): backend verifies the raw Bearer JWT itself
+GATEWAY_MODE = os.getenv("GATEWAY_MODE", "true").lower() != "false"
+
+# Where the signing keys for incoming tokens live, per mode
+TOKEN_JWKS_URL = f"{APIM_URL}/oauth2/jwks" if GATEWAY_MODE else f"{IS_URL}/oauth2/jwks"
 
 # ---------------------------------------------------------------------------
 # In-memory stores
@@ -114,18 +127,70 @@ app.add_middleware(
 )
 
 # ---------------------------------------------------------------------------
-# JWKS — load APIM signing keys for X-JWT-Assertion verification
+# JWKS — signing keys for incoming-token verification (APIM's keys in gateway
+# mode, the IdP's own keys in no-gateway mode)
 # ---------------------------------------------------------------------------
 def _load_jwks() -> None:
     ctx = ssl.create_default_context()
     ctx.check_hostname = False
     ctx.verify_mode = ssl.CERT_NONE
-    with urllib.request.urlopen(APIM_JWKS_URL, context=ctx) as resp:
+    with urllib.request.urlopen(TOKEN_JWKS_URL, context=ctx) as resp:
         data = json.loads(resp.read())
     for key_data in data.get("keys", []):
         kid = key_data.get("kid", "default")
         _public_keys[kid] = RSAAlgorithm.from_jwk(json.dumps(key_data))
-    print(f"Loaded {len(_public_keys)} APIM signing key(s).")
+    print(f"Loaded {len(_public_keys)} signing key(s) from {TOKEN_JWKS_URL}.")
+
+
+def _verify_jwt(token: str) -> dict:
+    """Verify a JWT's signature/expiry against the loaded JWKS and return claims."""
+    if not _public_keys:
+        try:
+            _load_jwks()
+        except Exception as exc:
+            raise HTTPException(status_code=503, detail=f"Cannot load signing keys: {exc}")
+    try:
+        unverified_header = jwt.get_unverified_header(token)
+    except jwt.DecodeError as exc:
+        raise HTTPException(status_code=400, detail=f"Malformed JWT: {exc}")
+    kid = unverified_header.get("kid", "default")
+    public_key = _public_keys.get(kid) or next(iter(_public_keys.values()), None)
+    if not public_key:
+        raise HTTPException(status_code=503, detail="No signing key available.")
+    try:
+        # verify_aud=False: APIM's X-JWT-Assertion omits 'aud'; Asgardeo sets it
+        # to the client_id, which isn't a secret worth gating on in this lab.
+        return jwt.decode(token, public_key, algorithms=["RS256"], options={"verify_aud": False})
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(status_code=401, detail="Token expired.")
+    except jwt.InvalidTokenError as exc:
+        raise HTTPException(status_code=401, detail=f"Invalid token: {exc}")
+
+
+def _caller_claims(x_jwt_assertion: str | None, authorization: str | None, verify: bool) -> dict:
+    """Resolve caller claims for the current mode.
+
+    Gateway mode: claims come from X-JWT-Assertion; `verify` controls whether we
+    check APIM's signature (the gateway already validated the real token, so
+    unverified reads are acceptable for display-only endpoints).
+    No-gateway mode: claims always come from the raw Bearer token and are always
+    signature-verified — the backend is the trust boundary here.
+    """
+    if GATEWAY_MODE:
+        if not x_jwt_assertion:
+            raise HTTPException(
+                status_code=401,
+                detail="Missing X-JWT-Assertion. Request must come through APIM with jwt.enable=true.",
+            )
+        if verify:
+            return _verify_jwt(x_jwt_assertion)
+        try:
+            return jwt.decode(x_jwt_assertion, options={"verify_signature": False})
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail=f"Invalid JWT: {exc}")
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Missing Authorization: Bearer token.")
+    return _verify_jwt(authorization[len("Bearer "):])
 
 
 # ===========================================================================
@@ -149,61 +214,30 @@ def public_resource():
 
 
 @app.get("/secure-resource")
-def secure_resource(x_jwt_assertion: str = Header(default=None)):
-    if not x_jwt_assertion:
-        raise HTTPException(
-            status_code=401,
-            detail="Missing X-JWT-Assertion. Request must come through APIM with jwt.enable=true.",
-        )
-    if not _public_keys:
-        try:
-            _load_jwks()
-        except Exception as exc:
-            raise HTTPException(status_code=503, detail=f"Cannot load signing keys: {exc}")
-
-    try:
-        unverified_header = jwt.get_unverified_header(x_jwt_assertion)
-    except jwt.DecodeError as exc:
-        raise HTTPException(status_code=400, detail=f"Malformed JWT: {exc}")
-
-    kid = unverified_header.get("kid", "default")
-    public_key = _public_keys.get(kid) or next(iter(_public_keys.values()), None)
-    if not public_key:
-        raise HTTPException(status_code=503, detail="No APIM signing key available.")
-
-    try:
-        # verify_aud=False: APIM's X-JWT-Assertion omits the 'aud' claim by design.
-        payload = jwt.decode(
-            x_jwt_assertion, public_key,
-            algorithms=["RS256"], options={"verify_aud": False},
-        )
-        return {
-            "message": "Access granted",
-            "user": payload.get("sub"),
-            "issuer": payload.get("iss"),
-            "claims": payload,
-        }
-    except jwt.ExpiredSignatureError:
-        raise HTTPException(status_code=401, detail="Token expired.")
-    except jwt.InvalidTokenError as exc:
-        raise HTTPException(status_code=401, detail=f"Invalid token: {exc}")
+def secure_resource(x_jwt_assertion: str = Header(default=None), authorization: str = Header(default=None)):
+    payload = _caller_claims(x_jwt_assertion, authorization, verify=True)
+    return {
+        "message": "Access granted",
+        "user": payload.get("sub"),
+        "issuer": payload.get("iss"),
+        "claims": payload,
+    }
 
 
 @app.get("/reports")
-def reports(x_jwt_assertion: str = Header(default=None)):
-    # APIM enforces read:reports scope before forwarding here — scope check already passed.
-    if not x_jwt_assertion:
-        raise HTTPException(status_code=401, detail="Missing X-JWT-Assertion.")
-    try:
-        # verify_signature=False: APIM enforces the scope gate upstream; backend only reads claims for display.
-        payload = jwt.decode(x_jwt_assertion, options={"verify_signature": False})
-        return {
-            "message": "Reports access granted — read:reports scope verified by APIM",
-            "user": payload.get("sub"),
-            "scope": payload.get("scope", "—"),
-        }
-    except Exception as exc:
-        raise HTTPException(status_code=400, detail=f"Invalid JWT: {exc}")
+def reports(x_jwt_assertion: str = Header(default=None), authorization: str = Header(default=None)):
+    # Gateway mode: APIM already enforced the read:reports scope upstream, claims
+    # are display-only. No-gateway mode: the backend IS the scope gate.
+    payload = _caller_claims(x_jwt_assertion, authorization, verify=False)
+    scope = payload.get("scope", "")
+    if not GATEWAY_MODE and "read:reports" not in scope.split():
+        raise HTTPException(status_code=403, detail="Missing required scope: read:reports")
+    return {
+        "message": "Reports access granted — read:reports scope verified by "
+                   + ("APIM" if GATEWAY_MODE else "backend"),
+        "user": payload.get("sub"),
+        "scope": scope or "—",
+    }
 
 
 # ===========================================================================
@@ -223,16 +257,20 @@ def _build_login_url(idp_name: str) -> dict:
     state = secrets.token_urlsafe(16)
     verifier, challenge = _pkce_pair()
     _add_state(state, verifier)
-    params = urllib.parse.urlencode({
+    query = {
         "response_type":         "code",
         "client_id":             IS_CLIENT_ID,
         "redirect_uri":          AUTH_CALLBACK_URL,
         "scope":                 "openid profile email",
         "state":                 state,
-        "fidp":                  idp_name,
         "code_challenge":        challenge,
         "code_challenge_method": "S256",
-    })
+    }
+    # Empty IdP name → no fidp param → the IdP shows its own login page with
+    # every configured sign-in option (useful for Asgardeo's hosted login).
+    if idp_name:
+        query["fidp"] = idp_name
+    params = urllib.parse.urlencode(query)
     return {"url": f"{IS_PUBLIC_URL}/oauth2/authorize?{params}"}
 
 
@@ -288,16 +326,10 @@ async def auth_exchange(body: ExchangeRequest):
 
 
 @app.get("/auth/me")
-def auth_me(x_jwt_assertion: str = Header(default=None)):
-    # Routed through the secured LabAPI — APIM already validated the caller's token
-    # and injects the claims here. No raw Authorization header reaches the backend
-    # for secured resources, so we read claims instead of introspecting.
-    if not x_jwt_assertion:
-        raise HTTPException(status_code=401, detail="Missing X-JWT-Assertion.")
-    try:
-        payload = jwt.decode(x_jwt_assertion, options={"verify_signature": False})
-    except Exception as exc:
-        raise HTTPException(status_code=400, detail=f"Invalid JWT: {exc}")
+def auth_me(x_jwt_assertion: str = Header(default=None), authorization: str = Header(default=None)):
+    # Gateway mode: APIM already validated the caller's token and injects claims
+    # via X-JWT-Assertion. No-gateway mode: verify the raw Bearer token instead.
+    payload = _caller_claims(x_jwt_assertion, authorization, verify=False)
     return {
         "sub":   payload.get("sub"),
         "name":  payload.get("name") or payload.get("sub"),

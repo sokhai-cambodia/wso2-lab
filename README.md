@@ -23,7 +23,8 @@ wso2-lab/
 ├── README.md            ← this file
 ├── LEARNING.md          ← detailed phase-by-phase journal
 ├── .env.example         ← every overridable variable with its default (.env is optional)
-├── docker-compose.yml
+├── docker-compose.yml            ← the full lab (gateway mode)
+├── docker-compose.standalone.yml ← frontend+backend only, external IdP
 ├── backend/             ← FastAPI service (auth flow + demo API endpoints)
 ├── frontend/            ← Next.js portal (login, callback, dashboard)
 ├── docs/                ← ARCHITECTURE.md (runtime flows) + session notes
@@ -34,7 +35,7 @@ wso2-lab/
 └── certs/               ← mkcert output (committed on purpose — lab-only)
 ```
 
-All frontend traffic (auth **and** business API calls) goes through the APIM gateway — there's no direct browser→backend path. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full request lifecycle and [LEARNING.md Phase 9](LEARNING.md#-phase-9-apim-gateway-migration--tls-ingress) for how it got this way.
+In the full lab, all frontend traffic (auth **and** business API calls) goes through the APIM gateway — there's no direct browser→backend path. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full request lifecycle and [LEARNING.md Phase 9](LEARNING.md#-phase-9-apim-gateway-migration--tls-ingress) for how it got this way. Alternatively, [Standalone mode](#standalone-mode-external-idp-no-gateway) runs just frontend + backend against an external IdP (Asgardeo / cloud / dev/UAT on-prem IS), with the backend as its own trust boundary.
 
 > Note: logout is client-side only (session cleared in the browser; the IS token expires at its ~1h TTL). Server-side revocation is impossible behind the gateway — see "The one rule" in ARCHITECTURE.md.
 
@@ -140,6 +141,47 @@ matches the seeded lab. To override anything (IdP connection names, ports, JVM
 heap, URLs), copy `.env.example` to `.env`, edit, and `docker compose up -d`.
 The one exception: `NEXT_PUBLIC_BACKEND_URL` is baked into the frontend bundle
 at **build** time, so changing it needs `docker compose build frontend` first.
+
+## Standalone mode (external IdP, no gateway)
+
+An alternative lightweight setup: only **frontend + backend** run locally
+(`http://localhost:3000` / `:8000`), and identity comes from **any external
+WSO2 IS** — [Asgardeo](https://console.asgardeo.io) (WSO2's SaaS IS), another
+cloud instance, or a dev/UAT on-prem IS. With no gateway in front, the backend
+verifies the raw Bearer JWT itself (`GATEWAY_MODE=false`) against the IdP's JWKS.
+
+1. On the IdP, register an OIDC web application (in Asgardeo:
+   **Applications → New Application → Traditional Web Application**; on-prem IS:
+   a Service Provider / Standard-Based App):
+   - Authorized redirect URL: `http://localhost:3000/callback`
+   - Allowed origin: `http://localhost:3000`
+   - **Access token type: JWT** (required — the backend can't self-validate
+     opaque tokens; in Asgardeo this is on the app's Protocol tab)
+   - Request the **Email** + **Profile** user attributes
+2. Add Microsoft login on the IdP: [Azure portal](https://portal.azure.com) →
+   app registration as in step 4 above, but with redirect URI
+   `<IdP base URL>/commonauth` (Asgardeo: `https://api.asgardeo.io/t/<org>/commonauth`).
+   Then on the IdP: **Connections → New Connection → Microsoft** → paste the
+   Azure Client ID/Secret → add it to the application's **Login Flow**.
+3. Set in `.env` (see `.env.example`):
+   ```
+   IDP_BASE_URL=https://api.asgardeo.io/t/<org>     # or https://is-dev.example.com
+   IDP_CLIENT_ID=...
+   IDP_CLIENT_SECRET=...
+   ```
+4. Run it (stop the full lab first — it also binds ports 3000/8000):
+   ```bash
+   docker compose -f docker-compose.standalone.yml -p wso2-lab-standalone up -d --build
+   ```
+5. Open `http://localhost:3000` → **Login with Microsoft**. (The GitHub button
+   lands on the IdP's own login page in this mode unless you configure a GitHub
+   connection there and set `IDP_GITHUB_NAME` — and on that hosted page *any*
+   sign-in method the IdP offers works, regardless of the button's label.)
+
+Notes: the *Reports* card 403s in this mode unless the IdP issues a
+`read:reports` scope — that's the backend enforcing scope itself, which APIM
+did for you in gateway mode. Tear down with
+`docker compose -p wso2-lab-standalone down`.
 
 ## Troubleshooting
 
