@@ -112,16 +112,17 @@ services:
     ports:
       - "8000:8000"
     environment:
-      # WSO2 IS — broker for GitHub federated login (compose service name;
-      # same container as wso2is-local, standardized on the service name)
+      # WSO2 IS — broker for federated login, GitHub + Microsoft (compose service
+      # name; same container as wso2is-local, standardized on the service name)
       - WSO2_IS_URL=${WSO2_IS_URL:-https://wso2is:9444}
       - WSO2_IS_PUBLIC_URL=${WSO2_IS_PUBLIC_URL:-https://localhost:9444}
       # Defaults match the Service Provider baked into the seed dumps, so a
       # fresh clone needs no .env. Lab-only credentials — committed on purpose.
-      - WSO2_IS_CLIENT_ID=${WSO2_IS_CLIENT_ID:-o31d7R_IGzelfuKfxnJ436MGY74a}
-      - WSO2_IS_CLIENT_SECRET=${WSO2_IS_CLIENT_SECRET:-Owtf8cTostthuwBj2D5bz64NqnDsJtBzYU3fHAEscloa}
-      # Names of the federated connections in IS (Connections tab — must match exactly)
-      - GITHUB_IDP_NAME=${GITHUB_IDP_NAME:-GitHub}
+      - WSO2_IS_CLIENT_ID=${WSO2_IS_CLIENT_ID:-p2FzvrIxi2RqNRFYV4VLPILMImIa}
+      - WSO2_IS_CLIENT_SECRET=${WSO2_IS_CLIENT_SECRET:-PinR1EHzFD2Dc5kw6mCeHqVzPW3hK1i7wa0m3SBaZb4a}
+      # Names of the federated connections in IS (Connections tab — must match
+      # exactly; the values here match the seeded connections, case-sensitive)
+      - GITHUB_IDP_NAME=${GITHUB_IDP_NAME:-github}
       - MICROSOFT_IDP_NAME=${MICROSOFT_IDP_NAME:-Microsoft}
       # WSO2 APIM — URL used only to load JWKS for X-JWT-Assertion verification
       - WSO2_APIM_URL=${WSO2_APIM_URL:-https://wso2apim:9443}

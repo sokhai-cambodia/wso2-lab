@@ -4,3 +4,8 @@
 *.sql text eol=lf
 *.toml text eol=lf
 *.conf text eol=lf
+# Keep diffs readable: Windows editors keep rewriting these as CRLF
+*.yml  text eol=lf
+*.yaml text eol=lf
+*.md   text eol=lf
+*.json text eol=lf
